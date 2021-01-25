@@ -1,9 +1,11 @@
 <img align="left" src="misc/logo.jpg">
-
+    
+    
+<br /><br /><br /><br /><br /><br />
+    
+    
 ### [CVISS Research](http://www.cviss.net/)
-
-
-
+    
 ## Learning based Image Scale Estimation (LISE) for Quantitative Visual Inspection
 
 ### Introduction
