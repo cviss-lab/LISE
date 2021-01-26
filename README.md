@@ -17,6 +17,8 @@ This repository contains the source code used by the authors for training and va
 This repository strictly deals with the generation of the patch-scale image dataset, and the training of the CNN model. Note that for the pretrained models, all models use greyscale patch size of 850 X 850 pixels as input. The training framework is shown in the following image. The data generation algorithm uses ArUco markers as a method to calculate image scale.
 
 <img align="left" src="misc/Fig_training.png">
+    
+Data used to train the LISE models (PED, ASH, and BW), other validation datasets (ZOOM and DIFF for PED model), and model training results are downloadable on [University of Waterloo Dataverse](https://dataverse.scholarsportal.info/dataset.xhtml?persistentId=doi:10.5683/SP2/YKUZHG).
 
 ### Dependencies
 
@@ -44,7 +46,7 @@ scikit_learn==0.24.1
 
 #### Step 1: unzip the sample dataset into the "datasets" folder
 
-Download **sample_PED.zip** from the [data repository](https://dataverse.scholarsportal.info/dataset.xhtml?persistentId=doi%3A10.5683%2FSP2%2FYKUZHG&version=DRAFT) and unzip to the **dataset** folder .
+Download **sample_PED.zip** from the [data repository](https://dataverse.scholarsportal.info/dataset.xhtml?persistentId=doi:10.5683/SP2/YKUZHG) and unzip to the **dataset** folder.
 
 #### Step 2: Detect markers and generate the patch-scale dataset
 
