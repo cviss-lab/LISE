@@ -5,7 +5,7 @@
     
     
 ### [CVISS Research](http://www.cviss.net/)
-    
+
 ## Learning based Image Scale Estimation (LISE) for Quantitative Visual Inspection
 
 ### Introduction
@@ -47,6 +47,8 @@ scikit_learn==0.24.1
 ## Sample usage example
 
 ### Creating the training dataset from collected images
+
+#### Step 0: cd to "code" folder
 
 #### Step 1: unzip the sample dataset into the "datasets" folder
 
