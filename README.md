@@ -1,9 +1,11 @@
 <img align="left" src="misc/logo.jpg">
-
+    
+    
+<br /><br /><br /><br /><br /><br />
+    
+    
 ### [CVISS Research](http://www.cviss.net/)
-
-
-
+    
 ## Learning based Image Scale Estimation (LISE) for Quantitative Visual Inspection
 
 ### Introduction
@@ -19,6 +21,8 @@ LISE is a CNN regression model trained to predict image scale using texture patc
 This repository strictly deals with the generation of the patch-scale image dataset, and the training of the CNN model. Note that for the pretrained models (pretrained_models.zip in the [data repository](https://dataverse.scholarsportal.info/dataset.xhtml?persistentId=doi%3A10.5683%2FSP2%2FYKUZHG)), all models take an input size of 299 X 299 pixels. The training framework is shown in the following image. The data generation algorithm uses ArUco markers as a method to calculate image scale.
 
 <img align="left" src="misc/Fig_training.png">
+    
+Data used to train the LISE models (PED, ASH, and BW), other validation datasets (ZOOM and DIFF for PED model), and model training results are downloadable on [University of Waterloo Dataverse](https://dataverse.scholarsportal.info/dataset.xhtml?persistentId=doi:10.5683/SP2/YKUZHG).
 
 ### Dependencies
 
@@ -46,7 +50,7 @@ scikit_learn==0.24.1
 
 #### Step 1: unzip the sample dataset into the "datasets" folder
 
-Download **sample_PED.zip** from the [data repository](https://dataverse.scholarsportal.info/dataset.xhtml?persistentId=doi%3A10.5683%2FSP2%2FYKUZHG) and unzip to the **dataset** folder .
+Download **sample_PED.zip** from the [data repository](https://dataverse.scholarsportal.info/dataset.xhtml?persistentId=doi:10.5683/SP2/YKUZHG) and unzip to the **dataset** folder.
 
 #### Step 2: Detect markers and generate the patch-scale dataset
 
