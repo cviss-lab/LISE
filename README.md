@@ -8,11 +8,15 @@
 
 ### Introduction
 
-This repository contains the source code used by the authors for training and validating the LISE network developed for the [paper](https://onlinelibrary.wiley.com/doi/abs/10.1111/mice.12613). LISE is a CNN regression model trained to predict image scale using texture patches. Once estimated, the image scales can be used to quantify features on images (example image shown below).
+This repository contains the source code used by the authors for training and validating the LISE network developed for the [paper](https://onlinelibrary.wiley.com/doi/abs/10.1111/mice.12613),
+
+Park, JA, Yeum, CM, Hrynyk, TD. Learning‐based image scale estimation using surface textures for quantitative visual inspection of regions‐of‐interest. *Comput Aided Civ Inf*. 2021; 36: 227– 241.
+
+LISE is a CNN regression model trained to predict image scale using texture patches. Once estimated, the image scales can be used to quantify features on images (example image shown below).
 
 <img align="left" src="misc/Fig_inference.png">
 
-This repository strictly deals with the generation of the patch-scale image dataset, and the training of the CNN model. Note that for the pretrained models, all models use greyscale patch size of 850 X 850 pixels as input. The training framework is shown in the following image. The data generation algorithm uses ArUco markers as a method to calculate image scale.
+This repository strictly deals with the generation of the patch-scale image dataset, and the training of the CNN model. Note that for the pretrained models (pretrained_models.zip in the [data repository](https://dataverse.scholarsportal.info/dataset.xhtml?persistentId=doi%3A10.5683%2FSP2%2FYKUZHG)), all models take an input size of 299 X 299 pixels. The training framework is shown in the following image. The data generation algorithm uses ArUco markers as a method to calculate image scale.
 
 <img align="left" src="misc/Fig_training.png">
 
@@ -42,7 +46,7 @@ scikit_learn==0.24.1
 
 #### Step 1: unzip the sample dataset into the "datasets" folder
 
-Download **sample_PED.zip** from the [data repository](https://dataverse.scholarsportal.info/dataset.xhtml?persistentId=doi%3A10.5683%2FSP2%2FYKUZHG&version=DRAFT) and unzip to the **dataset** folder .
+Download **sample_PED.zip** from the [data repository](https://dataverse.scholarsportal.info/dataset.xhtml?persistentId=doi%3A10.5683%2FSP2%2FYKUZHG) and unzip to the **dataset** folder .
 
 #### Step 2: Detect markers and generate the patch-scale dataset
 
