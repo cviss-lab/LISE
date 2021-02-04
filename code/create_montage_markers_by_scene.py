@@ -1,14 +1,13 @@
 import cv2.aruco as aruco
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-import shutil
+import cv2, shutil, math, re, random, functools, time, os, errno
 from sklearn.metrics import mean_absolute_error
-import numpy as np
 from glob import glob
 from shapely.geometry import Polygon
-import time, os, errno, random, functools, re, math, cv2
-from contextlib import contextmanager
+
 
 def extract_directory(files, data_folder, out_folder):
     """
@@ -48,6 +47,7 @@ def make_dir(pths):
             shutil.rmtree(pths)
         os.makedirs(pths)
 
+
 def detect_marker(image, img, aruco_dict, parameters):
     """
     Using aruco algorithm, automatically find the marker.
@@ -66,26 +66,18 @@ def detect_marker(image, img, aruco_dict, parameters):
         found_marker = True
     else:
         found_marker = False
-    # If marker not found, try resizing image to find marker
-    # if not found_marker:
-    #     for i in range(60, 10, -3):
-    #         gray_rs = cv2.resize(gray, None, fx=i/100, fy=i/100)
-    #         # print(i)
-    #         corners, ids, rejectedImgPoints = aruco.detectMarkers(gray_rs, aruco_dict, parameters=parameters)
-    #         if len(corners) != 0:
-    #             print("Found marker using resize!")
-    #             corners = np.multiply(corners, 1/(i/100))
-    #             # cv2.namedWindow('test', cv2.WINDOW_NORMAL)
-    #             # cv2.resizeWindow('test', 1200, 600)
-    #             # cv2.polylines(gray, [corners[0][0].reshape((-1, 1, 2)).astype('int32')], True, (255, 0, 0), 10)
-    #             # for rp in rejectedImgPoints:
-    #             #     cv2.polylines(gray, [rp[0].reshape((-1, 1, 2)).astype('int32')], True, (255, 0, 0), 10)
-    #             # cv2.imshow('test', gray)
-    #             # cv2.waitKey(0)
-    #             # cv2.destroyAllWindows()
-    #             found_marker = True
-    #             break
 
+    # Try rotating image to find marker
+    if not found_marker:
+        for i in range(0, 360, 90):
+            # print(i)
+            gray_rotated, dummy_corners = rotate_image(gray, dummy_corners, i)
+            corners, ids, rejectedImgPoints = aruco.detectMarkers(gray_rotated, aruco_dict, parameters=parameters)
+            if len(corners) != 0:
+                print("Found markers!")
+                gray, corners = rotate_image(gray_rotated, corners, -i)
+                found_marker = True
+                break
     # Check that there is only one marker detected
     if len(corners) == 0:
         print("Found no markers in file: {}".format(img))
@@ -295,6 +287,7 @@ def crop_around_center(image, rotated_restricted_area, width, height):
 
     return image[y1:y2, x1:x2], cropped_and_rotated_restricted_area
 
+
 def get_crop(img, cnt, width=299, height=299):
     # print("shape of cnt: {}".format(cnt.shape))
     rect = cv2.minAreaRect(cnt)
@@ -326,11 +319,13 @@ def get_crop(img, cnt, width=299, height=299):
     # directly warp the rotated rectangle to get the straightened rectangle
     return cv2.warpPerspective(img, M, (width, height))
 
+
 def RotM(alpha):
     """ Rotation Matrix for angle ``alpha`` """
     sa, ca = np.sin(alpha), np.cos(alpha)
     return np.array([[ca, -sa],
                      [sa,  ca]])
+
 
 def getRandomSquareVertices(center, point_0, phi):
     '''
@@ -342,7 +337,7 @@ def getRandomSquareVertices(center, point_0, phi):
     return np.array(vv).astype(np.float32)
 
 
-def get_random_crops(image, crop_height, crop_width, restricted_area, n_crops=4, max_angle=360, seed=None, width=299, height=299, n_channels=1, m_images=10, margin=75):
+def get_random_crops(image, crop_height, crop_width, restricted_area, n_crops=4, max_angle=360, seed=None, width=299, height=299, n_channels=1, m_patches=10, margin=75):
     """
     Randomly rotate and retrieve crops from image to generate montages
     :param image: numpy array, contains the pixel value of images
@@ -350,17 +345,26 @@ def get_random_crops(image, crop_height, crop_width, restricted_area, n_crops=4,
     :param crop_width: int, crop width
     :param restricted_area: numpy array size 4-by-2, containing coordinates of the marker
     :param n_crops: int, Number of crops in the montage
-    :param m_images: int, Number of montages to generate
+    :param m_patches: int, Number of montages to generate
     :param max_angle: int, Angle by which the image is rotated
     :param seed: random number generator seed
     :return:
     """
     # Initialize parameters
     np.random.seed(seed=seed)
+    image_height, image_width = image.shape[0:2]
+    # with _log_time_usage('regex: '):
+    #     restricted_area = re.sub(' +', ' ', restricted_area.replace('\n', ' ').replace('[', ' ').replace(']', ' ')).strip().split(' ')
+    #     restricted_area = np.array([(float(restricted_area[0]), float(restricted_area[1])),
+    #                         (float(restricted_area[2]), float(restricted_area[3])),
+    #                         (float(restricted_area[4]), float(restricted_area[5])),
+    #                         (float(restricted_area[6]), float(restricted_area[7]))])
     crops = []
-    for i in range(m_images):
+    for i in range(m_patches):
         crops.append(get_crops(restricted_area, n_crops, image, crop_width, crop_height, n_channels, margin))
+        # crops.extend(get_crops(restricted_area, n_crops, image, crop_width, crop_height, n_channels, margin))
     return crops
+
 
 def montage_crops(n_crops, crop_width, crop_height, n_channels, crops):
     rows = int(n_crops ** 0.5)
@@ -374,6 +378,7 @@ def montage_crops(n_crops, crop_width, crop_height, n_channels, crops):
                 tmp_image[i * crop_height:(i + 1) * crop_height, j * crop_width:(j + 1) * crop_width, :] = crops[
                     i * rows + j]
     return tmp_image
+
 
 def get_crops(restricted_area, n_crops, image, crop_width, crop_height, n_channels, margin):
     crops = []
@@ -392,517 +397,271 @@ def get_crops(restricted_area, n_crops, image, crop_width, crop_height, n_channe
             x = np.random.randint(forbid_border, max_x)
             y = np.random.randint(forbid_border, max_y)
             rotation_angle = random.random()*np.pi
-            crop_vertices = getRandomSquareVertices((x,y), (crop_width/2, crop_height/2), rotation_angle)
-            crop_polygon = Polygon(
-                [(crop_vertices[0][0][0], crop_vertices[0][0][1]),
-                 (crop_vertices[1][0][0], crop_vertices[1][0][1]),
-                 (crop_vertices[2][0][0], crop_vertices[2][0][1]),
-                 (crop_vertices[3][0][0], crop_vertices[3][0][1])])
-            found_crop = not marker_polygon.intersects(crop_polygon)
+            with _log_time_usage('getRandomSquareVertices: '):
+                crop_vertices = getRandomSquareVertices((x,y), (crop_width/2, crop_height/2), rotation_angle)###############################################################################################
+                # crop_vertices = [getRandomSquareVertices((x, y), (1000 / 2, 1000 / 2), rotation_angle),
+                #                  getRandomSquareVertices((x, y), (800 / 2, 800 / 2), rotation_angle),
+                #                  getRandomSquareVertices((x, y), (500 / 2, 500 / 2), rotation_angle)]
+            with _log_time_usage('Polygon: '):
+                crop_polygon = Polygon(
+                    [(crop_vertices[0][0][0], crop_vertices[0][0][1]),
+                     (crop_vertices[1][0][0], crop_vertices[1][0][1]),
+                     (crop_vertices[2][0][0], crop_vertices[2][0][1]),
+                     (crop_vertices[3][0][0], crop_vertices[3][0][1])])
 
+                found_crop = not marker_polygon.intersects(crop_polygon)
+            # # Show plots
+            # x_plot, y_plot = crop_polygon.exterior.xy
+            # plt.plot(x_plot, y_plot)
+            # x_plot, y_plot = marker_polygon.exterior.xy
+            # plt.plot(x_plot, y_plot)
+            # plt.text(0, 0, found_crop, fontsize=12)
+            # plt.show()
             if found_crop:
-                if n_channels == 1:
-                    crops.append(get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), crop_vertices, crop_width, crop_height))
-                else:
-                    crops.append(get_crop(image, crop_vertices, crop_width, crop_height))
+                with _log_time_usage('get_crop: '):
+                    if n_channels == 1:
+                        crops.append(get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), crop_vertices, crop_width, crop_height))###############################################################################################
+                        # for cv, wid in zip(crop_vertices,[1000, 800, 500]):
+                        #     crops.append(get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv, wid, wid))
+                    else:
+                        crops.append(get_crop(image, crop_vertices, crop_width, crop_height))
                 break
             # attempt += 1
-    return montage_crops(n_crops, crop_width, crop_height, n_channels, crops)
-
-def create_n_by_n_markers(crop_width=850,
-                          crop_height=850,
-                          n_crops=25,
-                          m_images=10,
-                          marker_len=10.0,  # 10
-                          units='cm',
-                          raw_folder='datasets/9_all_data_compiled/',
-                          data_folder='1_data',
-                          out_folder='datasets/9_all_data_compiled/5by5/',
-                          split=0.1):
-    # 5x5: m_images=10, 3x3: m_images=28, 1x1: m_images=250
-    # Initialize aruco variables
-    aruco_dict = aruco.Dictionary_get(aruco.DICT_ARUCO_ORIGINAL)
-    # aruco_dict = aruco.Dictionary_get(aruco.DICT_4X4_50)
-    parameters = aruco.DetectorParameters_create()
-    parameters.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
-    parameters.cornerRefinementWinSize = 5
-
-    # Retrieve all images in data folder
-    files_glob = os.path.join(raw_folder, data_folder, "**/*.[jJ][pP][gG]")
-    files = glob(files_glob, recursive=True)
-    # Extract directories from image paths and make directories
-    all_dirs = extract_directory(files, data_folder, out_folder)
-    make_dir(all_dirs)
+    with _log_time_usage('montage_crop: '):
+        return montage_crops(n_crops, crop_width, crop_height, n_channels, crops) ############################################################################################### crops
 
 
-    # Run through all files and detect markers
-    df_img = {"original_fp": [], 'corners': [], "pix_per_len": [], 'units': []}
+def get_pix_per_len(corners, marker_len):
+    dist = []
+    for c in corners:
+        tmp_dist = []
+        for c_2 in corners:
+            tmp_dist.append(((c_2[0] - c[0]) ** 2 + (c_2[1] - c[1]) ** 2) ** 0.5)
+        tmp_dist = sorted(tmp_dist)[1:-1]
+        dist.extend(tmp_dist)
+    return np.average(dist) / marker_len
+
+
+def extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units, crop_height, crop_width, n_crops, m_patches, equalize_distribution):
+    # Initialize container for holding patch-wise information
     df_crop = {"original_fp": [], 'file': [], "pix_per_len": [], 'units': []}
-    for img in tqdm(files):
-        # Read image
-        image = cv2.imread(img)
-        # Create flexible subdirectory path
-        f_list = img.split('/')
-        idx = f_list.index(data_folder)
-        f_list = f_list[idx - len(f_list) + 1:-1]
-        # Detect marker
-        corners = detect_marker(image, img, aruco_dict, parameters)
-        if isinstance(corners, bool):
-            continue
-        else:
-            cont = False
-            for c in corners:
-                if c[0] > 5000 or c[1] > 5000 or c[0] < 0 or c[1] < 0:
-                    cont = True
-                    break
-            if cont:
-                continue
 
-        # Get len_per_pix
-        dist = []
-        for c in corners:
-            tmp_dist = []
-            for c_2 in corners:
-                tmp_dist.append(((c_2[0] - c[0]) ** 2 + (c_2[1] - c[1]) ** 2) ** 0.5)
-            tmp_dist = sorted(tmp_dist)[1:-1]
-            dist.extend(tmp_dist)
-        pix_per_len = np.average(dist) / marker_len
-        if pix_per_len < 10 or pix_per_len > 500:
-            corners = manually_select_marker(image)
-            # Get len_per_pix
-            dist = []
-            for c in corners:
-                tmp_dist = []
-                for c_2 in corners:
-                    tmp_dist.append(((c_2[0] - c[0]) ** 2 + (c_2[1] - c[1]) ** 2) ** 0.5)
-                tmp_dist = sorted(tmp_dist)[1:-1]
-                dist.extend(tmp_dist)
-            pix_per_len = np.average(dist) / marker_len
+    # If path to a dataframe containing marker information is provided, read the csv.
+    if img_df is not None:
+        df_img = pd.read_csv(img_df)
+    # Otherwise, loop through the images to detect the markers to form the dataframe
+    else:
+        # Container to hold the dataframe
+        df_img = {"original_fp": [], 'corners': [], "pix_per_len": [], 'units': []}
+        # Initialize aruco variables
+        aruco_dict = aruco.Dictionary_get(aruco.DICT_ARUCO_ORIGINAL)
+        # aruco_dict = aruco.Dictionary_get(aruco.DICT_4X4_50)
+        parameters = aruco.DetectorParameters_create()
+        parameters.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
+        parameters.cornerRefinementWinSize = 5
 
-        # Get Crop
-        new_crops = get_random_crops(image, crop_height, crop_width, corners, n_crops, m_images)
-        # Save crop and crop information
-        for c in range(len(new_crops)):
-            # Crop
-            new_cropped_fp = os.path.join(out_folder, 'cropped', '/'.join(f_list), f"{img.split('.')[-2].split('/')[-1]}_crop_{c + len(new_crops)}.JPG")
-            cv2.imwrite(new_cropped_fp, cv2.resize(new_crops[c], (299, 299), interpolation=cv2.INTER_LINEAR))
-            # cv2.imwrite(new_cropped_fp, new_crops[c])
-            # Crop information
-            df_crop['original_fp'].append(img)
-            df_crop['file'].append(new_cropped_fp)
-            df_crop['pix_per_len'].append(pix_per_len)
-            df_crop['units'].append(units)
-        # Save detection information
-        df_img['original_fp'].append(img)
-        df_img['corners'].append(corners)
-        df_img['pix_per_len'].append(pix_per_len)
-        df_img['units'].append(units)
-        # Print images with recognized markers
-        print_image = image.copy()
-        for corner in corners:
-            cv2.polylines(print_image, [corner.reshape((-1, 1, 2)).astype('int32')], True, (0, 0, 255), 20)
-        cv2.imwrite(f"{out_folder}/detected_img/{'/'.join(f_list)}/{img.split('/')[-1]}", print_image)
-    # Save Dataframes
-    df_crop = pd.DataFrame(df_crop)
+        # Detect marker and compute pix_per_len for each image
+        print("Running detection algorithm...\n\n")
+        for img in tqdm(files):
+            # Read image
+            image = cv2.imread(img)
+            # Detect marker
+            corners = detect_marker(image, img, aruco_dict, parameters)
+            # If the marker detection algorithm didn't work, manually select the marker
+            if isinstance(corners, bool):
+                corners = manually_select_marker(image)
+            else:
+                cont = False
+                for c in corners:
+                    if c[0] > 5000 or c[1] > 5000 or c[0] < 0 or c[1] < 0:
+                        cont = True
+                        break
+                if cont:
+                    corners = manually_select_marker(image)
 
-    df_crop.to_csv(f'{out_folder}/crop_dataset.csv', index=False)
-    df_img = pd.DataFrame(df_img)
-    df_img.to_csv(f'{out_folder}/img_dataset.csv', index=False)
+            # Get pix_per_len
+            pix_per_len = get_pix_per_len(corners, marker_len)
+            # Check if marker was detected wierd. If true, then reselect marker corners
+            if pix_per_len < 10 or pix_per_len > 500:
+                if img_df is not None:
+                    print(f"Skipped {img}, pix_per_len = {pix_per_len}")
+                    continue
+                else:
+                    corners = manually_select_marker(image)
+                    pix_per_len = get_pix_per_len(corners, marker_len)
 
-def create_n_by_n_markers_from_df(crop_width=850,
-                          crop_height=850,
-                          n_crops=25,
-                          m_images=10,
-                          marker_len=10,
-                          units='cm',
-                          raw_folder='datasets/9_all_data_compiled/',
-                          data_folder='1_data',
-                          out_folder='datasets/9_all_data_compiled/5by5/',
-                          img_df='datasets/9_all_data_compiled/5by5/1_img_dataset/img_dataset.csv',
-                          split=0.1):
-    # 5x5: m_images=10, 3x3: m_images=28, 1x1: m_images=250
-    # Initialize aruco variables
-    # aruco_dict = aruco.Dictionary_get(aruco.DICT_ARUCO_ORIGINAL)
+            # Save marker information
+            df_img['original_fp'].append(img)
+            df_img['corners'].append(corners)
+            df_img['pix_per_len'].append(pix_per_len)
+            df_img['units'].append(units)
 
+        # Write image dataframe
+        df_img = pd.DataFrame(df_img)
+        df_img.to_csv(f'{out_folder}/img_dataset.csv', index=False)
 
-    # Retrieve all images in data folder
-    files_glob = os.path.join(raw_folder, data_folder, "**/*.[jJ][pP][gG]")
-    files = glob(files_glob, recursive=True)
-    # Extract directories from image paths and make directories
-    all_dirs = extract_directory(files, data_folder, out_folder)
-    make_dir(all_dirs)
+    # If equalize distribution is on, then calculate historgram of image scales
+    if equalize_distribution:
+        # Calculate histogram
+        counts, bins = np.histogram(df_img['pix_per_len'],
+                                    range=(df_img['pix_per_len'].min() - 1, df_img['pix_per_len'].max() + 1))
+        # Calculate m_image multiplication factor
+        multiplier = np.floor(max(counts) / counts)
+        plt.bar(bins[:-1], multiplier)
+        plt.show()
+        print(counts)
+        print(multiplier)
 
-
-    # Run through all files and detect markers
-    df_img = {"original_fp": [], 'corners': [], "pix_per_len": [], 'units': []}
-    df_img = pd.read_csv(img_df)
-    df_crop = {"original_fp": [], 'file': [], "pix_per_len": [], 'units': []}
-    for idx, row in tqdm(df_img.iterrows()):
+    # Extract m patches for each image
+    print(f"Extracting patches from images...\n\n")
+    for idx, row in tqdm(df_img.iterrows(), total=len(df_img)):
         img = row['original_fp']
-        # Read image
-        image = cv2.imread(img)
-        # Create flexible subdirectory path
-        f_list = img.split('/')
-        idx = f_list.index(data_folder)
-        f_list = f_list[idx - len(f_list) + 1:-1]
-        # Detect marker
-        corners = re.sub(' +', ' ', row['corners'].replace('\n',' ').replace('[',' ').replace(']',' ')).strip().split(' ')
-        corners = np.array([(float(corners[0]), float(corners[1])),
-                   (float(corners[2]), float(corners[3])),
-                   (float(corners[4]), float(corners[5])),
-                   (float(corners[6]), float(corners[7]))])
-        if isinstance(corners, bool):
-            continue
-        else:
-            cont = False
-            for c in corners:
-                if c[0] > 5000 or c[1] > 5000 or c[0] < 0 or c[1] < 0:
-                    cont = True
-                    break
-            if cont:
-                continue
-
-        # Get len_per_pix
-        dist = []
-        for c in corners:
-            tmp_dist = []
-            for c_2 in corners:
-                tmp_dist.append(((c_2[0] - c[0]) ** 2 + (c_2[1] - c[1]) ** 2) ** 0.5)
-            tmp_dist = sorted(tmp_dist)[1:-1]
-            dist.extend(tmp_dist)
-        pix_per_len = np.average(dist) / marker_len
-        if pix_per_len < 10 or pix_per_len > 500:
-            # print(f"corners: {corners}")
-            print(f"Skipped, pix_per_len = {pix_per_len}")
-            continue
-        # Get Crop
-        new_crops = get_random_crops(image, crop_height, crop_width, corners, n_crops, m_images=m_images)
-        # Save crop and crop information
-        for c in range(len(new_crops)):
-            # Crop
-            new_cropped_fp = os.path.join(out_folder, 'cropped', '/'.join(f_list), f"{img.split('.')[-2].split('/')[-1]}_crop_{c + len(new_crops)}.JPG")
-            cv2.imwrite(new_cropped_fp, cv2.resize(new_crops[c], (299, 299), interpolation=cv2.INTER_LINEAR))
-            # Crop information
-            df_crop['original_fp'].append(img)
-            df_crop['file'].append(new_cropped_fp)
-            df_crop['pix_per_len'].append(pix_per_len)
-            df_crop['units'].append(units)
-        # Print images with recognized markers
-        print_image = image.copy()
-        for corner in corners:
-            cv2.polylines(print_image, [corner.reshape((-1, 1, 2)).astype('int32')], True, (0, 0, 255), 20)
-        cv2.imwrite(f"{out_folder}/detected_img/{'/'.join(f_list)}/{img.split('/')[-1]}", print_image)
-    # Save Dataframes
-    df_crop = pd.DataFrame(df_crop)
-    df_crop.to_csv(f'{out_folder}/crop_dataset.csv', index=False)
-
-def create_n_by_n_markers_from_df_equalize_frequency(crop_width=850,
-                          crop_height=850,
-                          n_crops=25,
-                          m_images=10,
-                          marker_len=10,
-                          units='cm',
-                          raw_folder='datasets/9_all_data_compiled/',
-                          data_folder='1_data',
-                          out_folder='datasets/9_all_data_compiled/5by5/',
-                          img_df='datasets/9_all_data_compiled/5by5/1_img_dataset/img_dataset.csv',
-                          split=0.1):
-    # 5x5: m_images=10, 3x3: m_images=28, 1x1: m_images=250
-    # Initialize aruco variables
-    # aruco_dict = aruco.Dictionary_get(aruco.DICT_ARUCO_ORIGINAL)
-
-
-    # Retrieve all images in data folder
-    files_glob = os.path.join(raw_folder, data_folder, "**/*.[jJ][pP][gG]")
-    files = glob(files_glob, recursive=True)
-    # Extract directories from image paths and make directories
-    all_dirs = extract_directory(files, data_folder, out_folder)
-    make_dir(all_dirs)
-
-
-    # Run through all files and detect markers
-    df_img = {"original_fp": [], 'corners': [], "pix_per_len": [], 'units': []}
-    df_img = pd.read_csv(img_df)
-    df_crop = {"original_fp": [], 'file': [], "pix_per_len": [], 'units': []}
-    # Calculate histogram
-    counts, bins = np.histogram(df_img['pix_per_len'], range=(df_img['pix_per_len'].min()-1,df_img['pix_per_len'].max()+1))
-    # Calculate m_image multiplication factor
-    multiplier = np.floor(max(counts)/counts)
-    plt.bar(bins[:-1], multiplier)
-    plt.show()
-    print(counts)
-    print(multiplier)
-    for idx, row in tqdm(df_img.iterrows()):
-        img = row['original_fp']
-        # Find the multiplier
-        val = row['pix_per_len']
-        multiplier_idx = -1
-        for j in range(len(multiplier)):
-            if val >= bins[j] and val < bins[j+1]:
-                multiplier_idx = j
-                break
-        if multiplier_idx == -1:
-            raise ValueError("WRONG")
-        # Read image
-        image = cv2.imread(img)
-        # Create flexible subdirectory path
-        f_list = img.split('/')
-        idx = f_list.index(data_folder)
-        f_list = f_list[idx - len(f_list) + 1:-1]
-        # Detect marker
-        corners = re.sub(' +', ' ', row['corners'].replace('\n',' ').replace('[',' ').replace(']',' ')).strip().split(' ')
-        corners = np.array([(float(corners[0]), float(corners[1])),
-                   (float(corners[2]), float(corners[3])),
-                   (float(corners[4]), float(corners[5])),
-                   (float(corners[6]), float(corners[7]))])
-        if isinstance(corners, bool):
-            continue
-        else:
-            cont = False
-            for c in corners:
-                if c[0] > 5000 or c[1] > 5000 or c[0] < 0 or c[1] < 0:
-                    cont = True
-                    break
-            if cont:
-                continue
-
-        # Get len_per_pix
-        dist = []
-        for c in corners:
-            tmp_dist = []
-            for c_2 in corners:
-                tmp_dist.append(((c_2[0] - c[0]) ** 2 + (c_2[1] - c[1]) ** 2) ** 0.5)
-            tmp_dist = sorted(tmp_dist)[1:-1]
-            dist.extend(tmp_dist)
-        pix_per_len = np.average(dist) / marker_len
-        if pix_per_len < 10 or pix_per_len > 500:
-            # print(f"corners: {corners}")
-            print(f"Skipped, pix_per_len = {pix_per_len}")
-            continue
-        # Get Crop
-        new_crops = get_random_crops(image, crop_height, crop_width, corners, n_crops, m_images=int(m_images*multiplier[multiplier_idx]))
-        # Save crop and crop information
-        for c in range(len(new_crops)):
-            # Crop
-            new_cropped_fp = os.path.join(out_folder, 'cropped', '/'.join(f_list), f"{img.split('.')[-2].split('/')[-1]}_crop_{c + len(new_crops)}.JPG")
-            # Resize image
-            cv2.imwrite(new_cropped_fp, cv2.resize(new_crops[c], (299, 299), interpolation=cv2.INTER_NEAREST))
-            # Crop information
-            df_crop['original_fp'].append(img)
-            df_crop['file'].append(new_cropped_fp)
-            df_crop['pix_per_len'].append(pix_per_len)
-            df_crop['units'].append(units)
-        # Print images with recognized markers
-        # print_image = image.copy()
-        # for corner in corners:
-        #     cv2.polylines(print_image, [corner.reshape((-1, 1, 2)).astype('int32')], True, (0, 0, 255), 20)
-        # cv2.imwrite(f"{out_folder}/detected_img/{'/'.join(f_list)}/{img.split('/')[-1]}", print_image)
-    # Save Dataframes
-    df_crop = pd.DataFrame(df_crop)
-    df_crop.to_csv(f'{out_folder}/crop_dataset.csv', index=False)
-
-
-def create_n_by_n_markers_from_df_equalize_frequency_half(crop_width=850,
-                          crop_height=850,
-                          n_crops=25,
-                          m_images=10,
-                          marker_len=10,
-                          units='cm',
-                          raw_folder='datasets/9_all_data_compiled/',
-                          data_folder='1_data',
-                          out_folder='datasets/9_all_data_compiled/5by5/',
-                          img_df='datasets/9_all_data_compiled/5by5/1_img_dataset/img_dataset.csv',
-                          split=0.1):
-    # 5x5: m_images=10, 3x3: m_images=28, 1x1: m_images=250
-    # Initialize aruco variables
-    # aruco_dict = aruco.Dictionary_get(aruco.DICT_ARUCO_ORIGINAL)
-
-
-    # Retrieve all images in data folder
-    files_glob = os.path.join(raw_folder, data_folder, "**/*.[jJ][pP][gG]")
-    files = glob(files_glob, recursive=True)
-    # Extract directories from image paths and make directories
-    all_dirs = extract_directory(files, data_folder, out_folder)
-    make_dir(all_dirs)
-
-
-    # Run through all files and detect markers
-    df_img = {"original_fp": [], 'corners': [], "pix_per_len": [], 'units': []}
-    df_img = pd.read_csv(img_df)
-    df_crop = {"original_fp": [], 'file': [], "pix_per_len": [], 'units': []}
-    # Calculate histogram
-    counts, bins = np.histogram(df_img['pix_per_len'], range=(df_img['pix_per_len'].min()-1,df_img['pix_per_len'].max()+1))
-    # Calculate m_image multiplication factor
-    multiplier = np.floor(max(counts)/counts)
-    for idx, row in tqdm(df_img.iterrows()):
-        img = row['original_fp']
-        # Find the multiplier
-        val = row['pix_per_len']
-        multiplier_idx = -1
-        for j in range(len(multiplier)):
-            if val >= bins[j] and val < bins[j+1]:
-                multiplier_idx = j
-                break
-        if multiplier_idx == -1:
-            raise ValueError("WRONG")
-        # Read image
-        image = cv2.imread(img)
-        # Create flexible subdirectory path
-        f_list = img.split('/')
-        idx = f_list.index(data_folder)
-        f_list = f_list[idx - len(f_list) + 1:-1]
-        # Detect marker
-        corners = re.sub(' +', ' ', row['corners'].replace('\n',' ').replace('[',' ').replace(']',' ')).strip().split(' ')
-        corners = np.array([(float(corners[0]), float(corners[1])),
-                   (float(corners[2]), float(corners[3])),
-                   (float(corners[4]), float(corners[5])),
-                   (float(corners[6]), float(corners[7]))])
-        # Resize
-        # scale_percent = 50  # percent of original size
-        # width = int(image.shape[1] * scale_percent / 100)
-        # height = int(image.shape[0] * scale_percent / 100)
-        # dim = (width, height)
-        # image = cv2.resize(image, dim, interpolation=cv2.INTER_LINEAR)
-        # corners /= 2
-        if isinstance(corners, bool):
-            continue
-        else:
-            cont = False
-            for c in corners:
-                if c[0] > 5000 or c[1] > 5000 or c[0] < 0 or c[1] < 0:
-                    cont = True
-                    break
-            if cont:
-                continue
-
-        # Get len_per_pix
-        dist = []
-        for c in corners:
-            tmp_dist = []
-            for c_2 in corners:
-                tmp_dist.append(((c_2[0] - c[0]) ** 2 + (c_2[1] - c[1]) ** 2) ** 0.5)
-            tmp_dist = sorted(tmp_dist)[1:-1]
-            dist.extend(tmp_dist)
-        pix_per_len = np.average(dist) / marker_len
-        # if pix_per_len < 10 or pix_per_len > 500:
-        #     # print(f"corners: {corners}")
-        #     print(f"Skipped, pix_per_len = {pix_per_len}")
-        #     continue
-        # Get Crop
-        new_crops = get_random_crops(image, crop_height, crop_width, corners, n_crops, m_images=int(m_images*multiplier[multiplier_idx]))
-        # Save crop and crop information
-        for c, f in zip(range(len(new_crops)), [1, 1.2, 2]*int(len(new_crops)/3)):
-            # Crop
-            new_cropped_fp = os.path.join(out_folder, 'cropped', '/'.join(f_list), f"{img.split('.')[-2].split('/')[-1]}_crop_{c + len(new_crops)}.JPG")
-            # Resize image
-            cv2.imwrite(new_cropped_fp, cv2.resize(new_crops[c], (299,299), interpolation=cv2.INTER_LINEAR))
-            # Crop information
-            df_crop['original_fp'].append(img)
-            df_crop['file'].append(new_cropped_fp)
-            df_crop['pix_per_len'].append(pix_per_len*f)
-            df_crop['units'].append(units)
-        # Print images with recognized markers
-        # print_image = image.copy()
-        # for corner in corners:
-        #     cv2.polylines(print_image, [corner.reshape((-1, 1, 2)).astype('int32')], True, (0, 0, 255), 20)
-        # cv2.imwrite(f"{out_folder}/detected_img/{'/'.join(f_list)}/{img.split('/')[-1]}", print_image)
-    # Save Dataframes
-    df_crop = pd.DataFrame(df_crop)
-    df_crop.to_csv(f'{out_folder}/crop_dataset.csv', index=False)
-
-
-def shuffle_n_by_n_markers_from_df(crop_width=299,
-                          crop_height=299,
-                          n_crops=25,
-                          m_images=10,
-                          marker_len=10,
-                          units='cm',
-                          raw_folder='datasets/9_all_data_compiled/',
-                          data_folder='bridge_2',
-                          out_folder='datasets/9_all_data_compiled/5by5/',
-                          crop_df='datasets/9_all_data_compiled/5by5/1_img_dataset/img_dataset.csv',
-                          split=0.1):
-    # 5x5: m_images=10, 3x3: m_images=28, 1x1: m_images=250
-    # Initialize aruco variables
-    # aruco_dict = aruco.Dictionary_get(aruco.DICT_ARUCO_ORIGINAL)
-
-
-    # Retrieve all images in data folder
-    files_glob = os.path.join(raw_folder, data_folder, "**/*.[jJ][pP][gG]")
-    files = glob(files_glob, recursive=True)
-    # Extract directories from image paths and make directories
-    all_dirs = extract_directory(files, data_folder, out_folder)
-    make_dir(all_dirs)
-
-
-    # Run through all files and detect markers
-    df_crop = pd.read_csv(crop_df)
-    df_crop_shuffled = {"original_fp": [], 'file': [], "pix_per_len": [], 'units': []}
-    for idx, row in tqdm(df_crop.iterrows()):
-        img = row['file']
         pix_per_len = row['pix_per_len']
         # Read image
         image = cv2.imread(img)
+
         # Create flexible subdirectory path
         f_list = img.split('/')
         idx = f_list.index(data_folder)
         f_list = f_list[idx - len(f_list) + 1:-1]
-        if pix_per_len < 10 or pix_per_len > 500:
-            # print(f"corners: {corners}")
-            print(f"Skipped, pix_per_len = {pix_per_len}")
-            continue
-        # Get Crop
-        crop_idx = np.arange(n_crops)
-        rows = int(n_crops ** 0.5)
-        for k in range(m_images):
-            # Shuffle idx
-            np.random.shuffle(crop_idx)
-            new_crop_image = np.zeros(image.shape, dtype='uint8')
-            for i in range(rows):
-                for j in range(rows):
-                    curr_idx = crop_idx[i*rows+j]
-                    i_im = int((curr_idx)/rows)
-                    j_im = (curr_idx)%rows
-                    new_crop_image[i * 299:(i + 1) * 299, j * 299:(j + 1) * 299, :] = image[i_im * 299:(i_im + 1) * 299, j_im * 299:(j_im + 1) * 299, :]
-            new_cropped_fp = os.path.join(out_folder, 'cropped', '/'.join(f_list), f"{img.split('.')[-2].split('/')[-1]}_shuffled_{k}.JPG")
-            cv2.imwrite(new_cropped_fp, new_crop_image)
+
+        # Get marker corners
+        corners = re.sub(' +', ' ',
+                         row['corners'].replace('\n', ' ').replace('[', ' ').replace(']', ' ')).strip().split(' ')
+        corners = np.array([(float(corners[0]), float(corners[1])),
+                            (float(corners[2]), float(corners[3])),
+                            (float(corners[4]), float(corners[5])),
+                            (float(corners[6]), float(corners[7]))])
+
+
+        # Get Crops
+        if equalize_distribution:
+            multiplier_idx = -1
+            for j in range(len(multiplier)):
+                if pix_per_len >= bins[j] and pix_per_len < bins[j + 1]:
+                    multiplier_idx = j
+                    break
+            if multiplier_idx == -1:
+                raise ValueError("WRONG")
+            new_crops = get_random_crops(image, crop_height, crop_width, corners, n_crops, m_patches=int(m_patches * multiplier[multiplier_idx]))
+        else:
+            new_crops = get_random_crops(image, crop_height, crop_width, corners, n_crops, m_patches=m_patches)
+
+        # Save crop and crop information
+        for c in range(len(new_crops)):
+            # Crop
+            new_cropped_fp = os.path.join(out_folder, 'cropped', '/'.join(f_list),
+                                          f"{img.split('.')[-2].split('/')[-1]}_crop_{c + len(new_crops)}.JPG")
+            cv2.imwrite(new_cropped_fp, new_crops[c])
             # Crop information
-            df_crop_shuffled['original_fp'].append(img)
-            df_crop_shuffled['file'].append(new_cropped_fp)
-            df_crop_shuffled['pix_per_len'].append(pix_per_len)
-            df_crop_shuffled['units'].append(units)
-    # Save Dataframes
-    df_crop_shuffled = pd.DataFrame(df_crop_shuffled)
-    df_crop_shuffled.to_csv(f'{out_folder}/crop_shuffle_dataset.csv', index=False)
+            df_crop['original_fp'].append(img)
+            df_crop['file'].append(new_cropped_fp)
+            df_crop['pix_per_len'].append(pix_per_len)
+            df_crop['units'].append(units)
+
+        # Print images with recognized markers
+        print_image = image.copy()
+        for corner in corners:
+            cv2.polylines(print_image, [corner.reshape((-1, 1, 2)).astype('int32')], True, (0, 0, 255), 20)
+        cv2.imwrite(f"{out_folder}/detected_img/{'/'.join(f_list)}/{img.split('/')[-1]}", print_image)
+
+    if img_df is not None:
+        return df_crop
+    else:
+        return df_crop, df_img
+
+
+def create_n_by_n_markers(crop_width=299,
+                          crop_height=299,
+                          n_crops=25,
+                          m_patches=10,
+                          marker_len=10.0,  # 10
+                          units='cm',
+                          overall_folder='datasets/9_all_data_compiled/',
+                          data_folder='1_data',
+                          out_folder='datasets/9_all_data_compiled/5by5/',
+                          img_df=None,
+                          equalize_distribution=False):
+    """
+    From a set of collected images categorized into scenes (e.g., 1 folder contains images pertaining to 1 unique scene), create a patch-image scale dataset by:
+        Option 1) Running a marker detection algorithm to detect markers, compute the pixel per length metric, and extract m patches per image.
+        Option 2) Reading a dataframe containing marker corner coordinates and scales for each image to extract m patches per image.
+
+        Optionally, the user can turn on "equalize_distribution" to extract different number of patches per image to equalize the histogram of patch scales.
+        This would allow loss to be equally distributed across all values of scales.
+
+    If an image of with a marker pops up on screen, that means the algorithm was not able to detect the marker.
+    Proceed to click the four corners of the marker and then when you're done, press "c".
+    If you mess up, press "r" to reset.
+
+    TODO: equalize frequency doesn't work properly. Feel free to try and fix it :)
+
+    :param crop_width (int): Width of crop to extract from the images
+    :param crop_height (int): Height of crop to extract from the images
+    :param n_crops (int): Number of crops to include in a patch. Use n^2 (1, 4, 9, 25, etc.)
+    :param m_patches (int): Number of patches to extract per image
+    :param marker_len (float): The physical length of the marker for a given dataset.
+    :param units (str): The units of the marker_len (cm? mm?)
+    :param overall_folder (str): Path to the folder containing all data, the raw data, detected images, raw data etc.
+    :param data_folder (str): Name of the folder in the overall_folder that contains the raw data
+    :param out_folder (str): Path to the folder that will contain the crop dataset
+    :param img_df (str): Path to the csv that contains marker corner coordinates and scales for each image. If supplied, the algorithm will run option 2, if not, it will run option 1.
+    :param equalize_distribution (boolean): Set true to equalize the distribution of patch scales.
+    """
+    # Retrieve all images in data folder
+    files_glob = os.path.join(overall_folder, data_folder, "**/*.[jJ][pP][gG]") # extracts files which end with jpg (not case sensitive)
+    files = glob(files_glob, recursive=True)    # returns the list of files
+    # Extract directories from image paths and make directories
+    all_dirs = extract_directory(files, data_folder, out_folder)
+    make_dir(all_dirs)
+
+    # Extract crops to form the patch dataset
+    if img_df is None:
+        df_crop, df_img = extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units, crop_height, crop_width, n_crops, m_patches, equalize_distribution)
+    else:
+        df_crop = extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units, crop_height, crop_width, n_crops, m_patches, equalize_distribution)
+
+    # Save crop dataframes
+    df_crop = pd.DataFrame(df_crop)
+    df_crop.to_csv(f'{out_folder}/crop_dataset.csv', index=False)
 
 
 if __name__ == '__main__':
-    create_n_by_n_markers(n_crops=1, m_images=50, raw_folder='../datasets/PED/', out_folder='../datasets/PED/2_detected_imgs', marker_len=9.4)
+    # To run the detection and output the dataframe containing corners of detected markers, run this code:
     # BW
-    # create_n_by_n_markers_from_df(n_crops=1, m_images=50, raw_folder='../datasets/BW/', out_folder='../datasets/BW/3_test_final', img_df='../datasets/BW/2_processed/test_img_dataset.csv', crop_height=850, crop_width=850)
-    # create_n_by_n_markers_from_df_equalize_frequency(n_crops=1, m_images=15, raw_folder='../datasets/BW/', out_folder='../datasets/BW/3_train_final', img_df='../datasets/BW/2_processed/train_img_dataset.csv', crop_height=850, crop_width=850)
+    # create_n_by_n_markers(n_crops=1, m_patches=50, overall_folder='../datasets/BW/', out_folder='../datasets/BW/testing',
+    #                       # img_df='../datasets/BW/2_processed/test_img_dataset.csv',
+    #                       crop_height=850, crop_width=850,
+    #                       # equalize_distribution=True
+    #                       )
+
+
     # # PED_V2 BRIDGE 100
-    # create_n_by_n_markers_from_df(n_crops=1, m_images=50, raw_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_test_100_final', img_df='../datasets/PED_V2/2_processed/test_img_dataset.csv', crop_height=100, crop_width=100, marker_len=9.4)
-    # create_n_by_n_markers_from_df_equalize_frequency(n_crops=1, m_images=15, raw_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_train_100_final', img_df='../datasets/PED_V2/2_processed/train_img_dataset.csv', crop_height=100, crop_width=100, marker_len=9.4)
+    # create_n_by_n_markers_from_df(n_crops=1, m_patches=50, overall_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_test_100_final', img_df='../datasets/PED_V2/2_processed/test_img_dataset.csv', crop_height=100, crop_width=100, marker_len=9.4)
+    # create_n_by_n_markers_from_df_equalize_distribution(n_crops=1, m_patches=15, overall_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_train_100_final', img_df='../datasets/PED_V2/2_processed/train_img_dataset.csv', crop_height=100, crop_width=100, marker_len=9.4)
     # # PED_V2 BRIDGE 350
-    # create_n_by_n_markers_from_df(n_crops=1, m_images=50, raw_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_test_350_final', img_df='../datasets/PED_V2/2_processed/test_img_dataset.csv', crop_height=350, crop_width=350, marker_len=9.4)
-    # create_n_by_n_markers_from_df_equalize_frequency(n_crops=1, m_images=15, raw_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_train_350_final', img_df='../datasets/PED_V2/2_processed/train_img_dataset.csv', crop_height=350, crop_width=350, marker_len=9.4)
+    # create_n_by_n_markers_from_df(n_crops=1, m_p atches=50, overall_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_test_350_final', img_df='../datasets/PED_V2/2_processed/test_img_dataset.csv', crop_height=350, crop_width=350, marker_len=9.4)
+    # create_n_by_n_markers_from_df_equalize_distribution(n_crops=1, m_patches=15, overall_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_train_350_final', img_df='../datasets/PED_V2/2_processed/train_img_dataset.csv', crop_height=350, crop_width=350, marker_len=9.4)
     # # PED_V2 BRIDGE 850
-    # create_n_by_n_markers_from_df(n_crops=1, m_images=50, raw_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_test_850_final', img_df='../datasets/PED_V2/2_processed/test_img_dataset.csv', crop_height=850, crop_width=850, marker_len=9.4)
-    # create_n_by_n_markers_from_df_equalize_frequency(n_crops=1, m_images=15, raw_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_train_850_final', img_df='../datasets/PED_V2/2_processed/train_img_dataset.csv', crop_height=850, crop_width=850, marker_len=9.4)
+    create_n_by_n_markers(n_crops=1, m_patches=50,  # 50 patches per image
+                          overall_folder='../datasets/PED_V2/', # folder that contains raw data
+                          out_folder='../datasets/PED_V2/testing',  # contains cropped dataset
+                          # img_df='../datasets/PED_V2/2_processed/test_img_dataset.csv',
+                          crop_height=850, crop_width=850, marker_len=9.4)
+    # create_n_by_n_markers_from_df_equalize_distribution(n_crops=1, m_patches=15, overall_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_train_850_final', img_df='../datasets/PED_V2/2_processed/train_img_dataset.csv', crop_height=850, crop_width=850, marker_len=9.4)
     # # ASH
-    # create_n_by_n_markers_from_df(n_crops=1, m_images=50, raw_folder='../datasets/ASH/', out_folder='../datasets/ASH/3_test_final', img_df='../datasets/ASH/2_processed/test_img_dataset.csv', crop_height=850, crop_width=850)
-    # create_n_by_n_markers_from_df_equalize_frequency(n_crops=1, m_images=15, raw_folder='../datasets/ASH/', out_folder='../datasets/ASH/3_train_final', img_df='../datasets/ASH/2_processed/train_img_dataset.csv', crop_height=850, crop_width=850)
+    # create_n_by_n_markers_from_df(n_crops=1, m_patches=50, overall_folder='../datasets/ASH/', out_folder='../datasets/ASH/3_test_final', img_df='../datasets/ASH/2_processed/test_img_dataset.csv', crop_height=850, crop_width=850)
+    # create_n_by_n_markers_from_df_equalize_distribution(n_crops=1, m_patches=15, overall_folder='../datasets/ASH/', out_folder='../datasets/ASH/3_train_final', img_df='../datasets/ASH/2_processed/train_img_dataset.csv', crop_height=850, crop_width=850)
 
     # # ASH_V2
-    # create_n_by_n_markers_from_df(n_crops=1, m_images=50, raw_folder='../datasets/ASH_V2/', out_folder='../datasets/ASH_V2/3_test_final', img_df='../datasets/ASH_V2/2_processed/test_img_dataset.csv', crop_height=850, crop_width=850)
-    # create_n_by_n_markers_from_df_equalize_frequency(n_crops=1, m_images=15, raw_folder='../datasets/ASH_V2/', out_folder='../datasets/ASH_V2/3_train_final', img_df='../datasets/ASH_V2/2_processed/train_img_dataset.csv', crop_height=850, crop_width=850)
+    # create_n_by_n_markers_from_df(n_crops=1, m_patches=50, overall_folder='../datasets/ASH_V2/', out_folder='../datasets/ASH_V2/3_test_final', img_df='../datasets/ASH_V2/2_processed/test_img_dataset.csv', crop_height=850, crop_width=850)
+    # create_n_by_n_markers_from_df_equalize_distribution(n_crops=1, m_patches=15, overall_folder='../datasets/ASH_V2/', out_folder='../datasets/ASH_V2/3_train_final', img_df='../datasets/ASH_V2/2_processed/train_img_dataset.csv', crop_height=850, crop_width=850)
 
     # # DIFF
-    # create_n_by_n_markers_from_df(n_crops=1, m_images=50, raw_folder='../datasets/DIFF/', out_folder='../datasets/DIFF/3_test_final', img_df='../datasets/DIFF/2_processed/img_dataset.csv', crop_height=850, crop_width=850, marker_len=9.2)
+    # create_n_by_n_markers_from_df(n_crops=1, m_patches=50, overall_folder='../datasets/DIFF/', out_folder='../datasets/DIFF/3_test_final', img_df='../datasets/DIFF/2_processed/img_dataset.csv', crop_height=850, crop_width=850, marker_len=9.2)
     # # ZOOM
-    # create_n_by_n_markers_from_df(n_crops=1, m_images=50, raw_folder='../datasets/ZOOM/', out_folder='../datasets/ZOOM/3_test_final', img_df='../datasets/ZOOM/2_processed/img_dataset.csv', crop_height=850, crop_width=850)
+    # create_n_by_n_markers_from_df(n_crops=1, m_patches=50, overall_folder='../datasets/ZOOM/', out_folder='../datasets/ZOOM/3_test_final', img_df='../datasets/ZOOM/2_processed/img_dataset.csv', crop_height=850, crop_width=850)
 
 
-    # create_n_by_n_markers_from_df_equalize_frequency(n_crops=1, m_images=20, raw_folder='../datasets/13_ped_bridge_new_dataset/', out_folder='../datasets/13_ped_bridge_new_dataset/paper_100/', img_df='../datasets/13_ped_bridge_new_dataset/1_processed/train_high_light_img_dataset.csv', crop_height=100, crop_width=100)
-    # create_n_by_n_markers_from_df_equalize_frequency(n_crops=1, m_images=20, raw_folder='../datasets/13_ped_bridge_new_dataset/', out_folder='../datasets/13_ped_bridge_new_dataset/paper_350/', img_df='../datasets/13_ped_bridge_new_dataset/1_processed/train_high_light_img_dataset.csv', crop_height=350, crop_width=350)
+    # create_n_by_n_markers_from_df_equalize_distribution(n_crops=1, m_patches=20, overall_folder='../datasets/13_ped_bridge_new_dataset/', out_folder='../datasets/13_ped_bridge_new_dataset/paper_100/', img_df='../datasets/13_ped_bridge_new_dataset/1_processed/train_high_light_img_dataset.csv', crop_height=100, crop_width=100)
+    # create_n_by_n_markers_from_df_equalize_distribution(n_crops=1, m_patches=20, overall_folder='../datasets/13_ped_bridge_new_dataset/', out_folder='../datasets/13_ped_bridge_new_dataset/paper_350/', img_df='../datasets/13_ped_bridge_new_dataset/1_processed/train_high_light_img_dataset.csv', crop_height=350, crop_width=350)
