@@ -353,12 +353,6 @@ def get_random_crops(image, crop_height, crop_width, restricted_area, n_crops=4,
     # Initialize parameters
     np.random.seed(seed=seed)
     image_height, image_width = image.shape[0:2]
-    # with _log_time_usage('regex: '):
-    #     restricted_area = re.sub(' +', ' ', restricted_area.replace('\n', ' ').replace('[', ' ').replace(']', ' ')).strip().split(' ')
-    #     restricted_area = np.array([(float(restricted_area[0]), float(restricted_area[1])),
-    #                         (float(restricted_area[2]), float(restricted_area[3])),
-    #                         (float(restricted_area[4]), float(restricted_area[5])),
-    #                         (float(restricted_area[6]), float(restricted_area[7]))])
     crops = []
     for i in range(m_patches):
         crops.append(get_crops(restricted_area, n_crops, image, crop_width, crop_height, n_channels, margin))
@@ -397,38 +391,25 @@ def get_crops(restricted_area, n_crops, image, crop_width, crop_height, n_channe
             x = np.random.randint(forbid_border, max_x)
             y = np.random.randint(forbid_border, max_y)
             rotation_angle = random.random()*np.pi
-            with _log_time_usage('getRandomSquareVertices: '):
-                crop_vertices = getRandomSquareVertices((x,y), (crop_width/2, crop_height/2), rotation_angle)###############################################################################################
-                # crop_vertices = [getRandomSquareVertices((x, y), (1000 / 2, 1000 / 2), rotation_angle),
-                #                  getRandomSquareVertices((x, y), (800 / 2, 800 / 2), rotation_angle),
-                #                  getRandomSquareVertices((x, y), (500 / 2, 500 / 2), rotation_angle)]
-            with _log_time_usage('Polygon: '):
-                crop_polygon = Polygon(
-                    [(crop_vertices[0][0][0], crop_vertices[0][0][1]),
-                     (crop_vertices[1][0][0], crop_vertices[1][0][1]),
-                     (crop_vertices[2][0][0], crop_vertices[2][0][1]),
-                     (crop_vertices[3][0][0], crop_vertices[3][0][1])])
+            
+            crop_vertices = getRandomSquareVertices((x,y), (crop_width/2, crop_height/2), rotation_angle)
+            crop_polygon = Polygon(
+                [(crop_vertices[0][0][0], crop_vertices[0][0][1]),
+                 (crop_vertices[1][0][0], crop_vertices[1][0][1]),
+                 (crop_vertices[2][0][0], crop_vertices[2][0][1]),
+                 (crop_vertices[3][0][0], crop_vertices[3][0][1])])
 
-                found_crop = not marker_polygon.intersects(crop_polygon)
-            # # Show plots
-            # x_plot, y_plot = crop_polygon.exterior.xy
-            # plt.plot(x_plot, y_plot)
-            # x_plot, y_plot = marker_polygon.exterior.xy
-            # plt.plot(x_plot, y_plot)
-            # plt.text(0, 0, found_crop, fontsize=12)
-            # plt.show()
+            found_crop = not marker_polygon.intersects(crop_polygon)
             if found_crop:
-                with _log_time_usage('get_crop: '):
-                    if n_channels == 1:
-                        crops.append(get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), crop_vertices, crop_width, crop_height))###############################################################################################
-                        # for cv, wid in zip(crop_vertices,[1000, 800, 500]):
-                        #     crops.append(get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv, wid, wid))
-                    else:
-                        crops.append(get_crop(image, crop_vertices, crop_width, crop_height))
+                if n_channels == 1:
+                    crops.append(get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), crop_vertices, crop_width, crop_height))###############################################################################################
+                    # for cv, wid in zip(crop_vertices,[1000, 800, 500]):
+                    #     crops.append(get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv, wid, wid))
+                else:
+                    crops.append(get_crop(image, crop_vertices, crop_width, crop_height))
                 break
             # attempt += 1
-    with _log_time_usage('montage_crop: '):
-        return montage_crops(n_crops, crop_width, crop_height, n_channels, crops) ############################################################################################### crops
+    return montage_crops(n_crops, crop_width, crop_height, n_channels, crops) ############################################################################################### crops
 
 
 def get_pix_per_len(corners, marker_len):
