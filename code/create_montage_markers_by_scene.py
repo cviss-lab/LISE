@@ -525,13 +525,17 @@ def extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_
         idx = f_list.index(data_folder)
         f_list = f_list[idx - len(f_list) + 1:-1]
 
+
         # Get marker corners
-        corners = re.sub(' +', ' ',
-                         row['corners'].replace('\n', ' ').replace('[', ' ').replace(']', ' ')).strip().split(' ')
-        corners = np.array([(float(corners[0]), float(corners[1])),
-                            (float(corners[2]), float(corners[3])),
-                            (float(corners[4]), float(corners[5])),
-                            (float(corners[6]), float(corners[7]))])
+        if isinstance(row['corners'], np.ndarray):
+            corners = row['corners']
+        else:
+            corners = re.sub(' +', ' ',
+                             row['corners'].replace('\n', ' ').replace('[', ' ').replace(']', ' ')).strip().split(' ')
+            corners = np.array([(float(corners[0]), float(corners[1])),
+                                (float(corners[2]), float(corners[3])),
+                                (float(corners[4]), float(corners[5])),
+                                (float(corners[6]), float(corners[7]))])
 
 
         # Get Crops
