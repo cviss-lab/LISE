@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import cv2, re, math, os, errno, time, functools, random
-from keras.utils import Sequence
+from tensorflow.keras.utils import Sequence
 from keras.preprocessing.image import ImageDataGenerator
 
 def split_given_size(a, size):
@@ -33,6 +33,8 @@ class MultiPatchDataGenerator(Sequence):
             self.n_channels = 3
         self.shuffle = shuffle
         self.shuffle_patches = shuffle_patches
+        if not shuffle_patches:
+            self._set_patch_sets()
         self.on_epoch_end()
         # Here is our beloved image augmentator <3
         self.transformer = img_transformer
@@ -41,7 +43,7 @@ class MultiPatchDataGenerator(Sequence):
         """Denotes the number of batches per epoch
         :return: number of batches per epoch
         """
-        return int(np.floor(len(self.patch_sets) / self.batch_size))
+        return int(np.ceil(len(self.patch_sets) / self.batch_size))
 
     def __getitem__(self, index):
         """Generate one batch of data
@@ -49,13 +51,16 @@ class MultiPatchDataGenerator(Sequence):
         :return: X and y when fitting. X only when predicting
         """
         # Generate indexes of the batch
-        indexes = self.indexes[index * self.batch_size:(index + 1) * self.batch_size]
+        idx_min = index * self.batch_size
+        idx_max = min(idx_min + self.batch_size, len(self.patch_sets))
+        indexes = self.indexes[idx_min: idx_max]
 
         # Find list of DFs, each DF contains a set of patches
         list_DFs_temp = [self.patch_sets[k] for k in indexes]
 
         # Generate image data
         X, y = self._generate_Xy(list_DFs_temp)
+
         return X, y
 
     def on_epoch_end(self):
@@ -74,8 +79,8 @@ class MultiPatchDataGenerator(Sequence):
         :return: batch of images
         """
         # Initialization
-        X = np.empty((self.batch_size, *self.dim, self.N*self.n_channels))
-        y = np.empty((self.batch_size))
+        X = np.empty((len(list_DFs_temp), *self.dim, self.N*self.n_channels))
+        y = np.empty((len(list_DFs_temp)))
         # Generate data
         for i, DF in enumerate(list_DFs_temp):
             # If it is the full image and not a montage, extract montages
@@ -132,6 +137,6 @@ class MultiPatchDataGenerator(Sequence):
                 if col == 'file':
                     out_df[col].append(self.patch_sets[i][col].tolist())
                 else:
-                    out_df[col].append(self.patch_sets[i][col][0])
+                    out_df[col].append(self.patch_sets[i][col].values[0])
 
         return pd.DataFrame(out_df)

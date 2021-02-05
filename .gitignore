@@ -2,3 +2,4 @@
 .idea
 datasets
 output
+__pycache__

@@ -14,6 +14,7 @@ from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import KFold
 from tqdm import tqdm
 from tensorflow.keras.layers import LeakyReLU
+from create_montage_markers_by_scene import montage_crops
 from custom_loss_functions import mape_0_to_1, weighted_mape
 from custom_data_generator import MultiPatchDataGenerator
 
@@ -339,9 +340,15 @@ class CNN_model:
 
         if self.retrain is None:  # Train new model
             # Import Base Model from Bag of Models
-            base_model = applications.MobileNetV2(
-                input_shape=(self.model_img_width, self.model_img_height, self.model_img_channels),
-                weights=None, include_top=False)
+            if self.model_type == 'multi':
+                base_model = applications.MobileNetV2(
+                    input_shape=(self.model_img_width, self.model_img_height, self.N_patches_per_set*self.model_img_channels),
+                    weights=None, include_top=False)
+            else:
+                base_model = applications.MobileNetV2(
+                    input_shape=(self.model_img_width, self.model_img_height, self.model_img_channels),
+                    weights=None, include_top=False)
+
             x = GlobalAveragePooling2D()(base_model.output)
             x = Dense(1280)(x)  # add a fully-connected layer
             x = Dense(1, name='predictions')(x)
@@ -355,7 +362,11 @@ class CNN_model:
             model.compile(loss=self.__loss_function(), optimizer=sgd)
         else:  # Re-train model
             print(self.retrain)
-            model = load_model(self.retrain, custom_objects={'weighted_mape': weighted_mape(250)})
+            try:
+                model = load_model(self.retrain, custom_objects={'weighted_mape': weighted_mape(250)})
+            except:
+                print(f"{self.retrain} not found. Using best_model.h5 instead")
+                model = load_model(os.path.join('/'.join(self.retrain.split('/')[:-1]), 'best_model.h5'), custom_objects={'weighted_mape': weighted_mape(250)})
 
         return model
 
@@ -488,21 +499,23 @@ class CNN_model:
                                                                shuffle=False,
                                                                class_mode="other",
                                                                target_size=(self.model_img_width, self.model_img_height))
+            data_len = len(data)
         elif self.model_type == 'multi':
             valid_generator = MultiPatchDataGenerator(data, self.N_patches_per_set, test_datagen, self.greyscale, self.batch_size, (self.model_img_width, self.model_img_height), False, False)
+            data_len = len(valid_generator.patch_sets)
         else:
             raise ValueError(f"Model type: {self.model_type} not implemented.")
 
         # Predict
         if self.norm_labels:
             print(f"mean: {self.mean_pt} std: {self.std_pt}")
-            predictions = model.predict_generator(valid_generator, steps=np.ceil(len(data)/self.batch_size), verbose=1) * self.std_pt + self.mean_pt
+            predictions = model.predict_generator(valid_generator, steps=np.ceil(data_len/self.batch_size), verbose=1) * self.std_pt + self.mean_pt
             if self.model_type == 'multi':
                 return valid_generator._get_patch_set_dataframe(), predictions
             else:
                 return predictions
         else:
-            predictions = model.predict_generator(valid_generator, steps=np.ceil(len(data)/self.batch_size), verbose=1)
+            predictions = model.predict_generator(valid_generator, steps=np.ceil(data_len/self.batch_size), verbose=1)
             if self.model_type == 'multi':
                 return valid_generator._get_patch_set_dataframe(), predictions
             else:
@@ -525,7 +538,13 @@ class CNN_model:
         for idx_row, a, p in zip(test_data[[self.x_name, self.y_name]].iterrows(), actual, predicted):
             idx = idx_row[0]
             row = idx_row[1]
-            img = cv2.imread(row[self.x_name])
+            if self.model_type == 'multi':
+                tmp_imgs = [cv2.resize(cv2.imread(fp), dsize=(self.model_img_width, self.model_img_height)) for fp in row[self.x_name]]
+                if self.greyscale:
+                    tmp_imgs = [cv2.cvtColor(tmp_img, cv2.COLOR_BGR2GRAY) for tmp_img in tmp_imgs]
+                img = montage_crops(len(row[self.x_name]), self.model_img_width, self.model_img_height, self.model_img_channels, tmp_imgs)
+            else:
+                img = cv2.imread(row[self.x_name])
             fc = (0, 0, 0)  # Font color
             fs = 0.001  # Font size
             # Get image shape
@@ -657,7 +676,6 @@ def __load_and_run_model_and_save_results(cnn, train_data, test_data):
     else:
         predictions = cnn.generate_predictions(model, test_data)
     # Output image results
-    # TODO: Work from here downwards
     cnn.output_image_results(test_data, test_data['pix_per_len'].values, predictions)
     # Output DataFrame results
     test_data['predicted_pix_per_len'] = predictions
@@ -767,7 +785,7 @@ if __name__ == '__main__':
     # Montage Training - uwb
     train = [
         # Sample
-        ('../output/PED_sample', "../datasets/PED/2_detected_imgs/train_1_data_crop_dataset.csv", 'mape', 0.001, 'reg', "../datasets/PED/2_detected_imgs/test_1_data_crop_dataset.csv"),
+        ('../output/PED_multi_test', "../datasets/PED_V2/3_train_850_final/crop_dataset.csv", 'mape', 0.001, 'reg', "../datasets/PED_V2/3_test_850_final/crop_dataset.csv"),
         # # ASH_V2
         # ('../output/ASH_V2_speed_test', "../datasets/ASH_V2/3_train_final/crop_dataset.csv", 'mape', 0.001, 'reg', "../datasets/ASH_V2/3_test_final/crop_dataset.csv"),
         # # 850
@@ -780,7 +798,7 @@ if __name__ == '__main__':
         # ('../output/PED_V2_350', "../datasets/PED_V2/3_train_350_final/crop_dataset.csv", 'mape', 0.001, 'reg', "../datasets/PED_V2/3_test_350_final/crop_dataset.csv"),
     ]
     train_config = {
-        "epochs": 250,
+        "epochs": 50,
         "output_pth": '',
         "pth_to_labels": "",
         'img_norm': '-1_to_+1',
@@ -793,7 +811,8 @@ if __name__ == '__main__':
             "brightness_range": [0.8, 1.2],
             "horizontal_flip": True,
             "vertical_flip": True,
-        }
+        },
+        "model_type": 'multi'
     }
     for t in train:
         train_config['output_pth'] = t[0]
