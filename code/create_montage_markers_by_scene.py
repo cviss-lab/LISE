@@ -441,7 +441,7 @@ def get_crops(restricted_area, n_crops, image, crop_width, crop_height, n_channe
             x = np.random.randint(forbid_border, max_x)
             y = np.random.randint(forbid_border, max_y)
             rotation_angle = random.random()*np.pi
-            
+
             crop_vertices = getRandomSquareVertices((x,y), (crop_width/2, crop_height/2), rotation_angle)
             crop_polygon = Polygon(
                 [(crop_vertices[0][0][0], crop_vertices[0][0][1]),
@@ -452,14 +452,14 @@ def get_crops(restricted_area, n_crops, image, crop_width, crop_height, n_channe
             found_crop = not marker_polygon.intersects(crop_polygon)
             if found_crop:
                 if n_channels == 1:
-                    crops.append(get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), crop_vertices, crop_width, crop_height))###############################################################################################
+                    crops.append(get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), crop_vertices, crop_width, crop_height))
                     # for cv, wid in zip(crop_vertices,[1000, 800, 500]):
                     #     crops.append(get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv, wid, wid))
                 else:
                     crops.append(get_crop(image, crop_vertices, crop_width, crop_height))
                 break
             # attempt += 1
-    return montage_crops(n_crops, crop_width, crop_height, n_channels, crops) ############################################################################################### crops
+    return montage_crops(n_crops, crop_width, crop_height, n_channels, crops)
 
 
 def get_pix_per_len(corners, marker_len):
@@ -476,10 +476,10 @@ def create_df_img(files, img_df, skip_manual_marker_selection, marker_len, out_f
     # If path to a dataframe containing marker information is provided, read the csv.
     if img_df is not None:
         df_img = pd.read_csv(img_df)
-        if isinstance(img_df['corners'].iloc[0], np.ndarray):
+        if isinstance(df_img['corners'][0], np.ndarray):
             pass
         else:
-            tmp_corners = [re.sub(' +', ' ', corner.replace('\n', ' ').replace('[', ' ').replace(']', ' ')).strip().split(' ') for corner in img_df['corners'].tolist()]
+            tmp_corners = [re.sub(' +', ' ', corner.replace('\n', ' ').replace('[', ' ').replace(']', ' ')).strip().split(' ') for corner in df_img['corners'].tolist()]
             tmp_corners = [np.array([(float(corners[0]), float(corners[1])),
                                 (float(corners[2]), float(corners[3])),
                                 (float(corners[4]), float(corners[5])),
@@ -674,7 +674,7 @@ def create_n_by_n_markers(crop_width=299,
     df_crop = pd.DataFrame(df_crop)
     df_crop.to_csv(f'{out_folder}/crop_dataset.csv', index=False)
 
-def create_zoom_dataset(crop_length=299,
+def create_zoom_dataset(crop_length=550,
                       m_patches=10,
                       marker_len=10.0,  # 10
                       units='cm',
@@ -685,10 +685,10 @@ def create_zoom_dataset(crop_length=299,
                       skip_manual_marker_selection=True,
                       n_bins=10,
                       margin=0, # in units of pixels
-                      patches_per_bin=100,
+                      patches_per_bin=300,
                       attempts=10,
                       st_type='smooth',  # "smooth" for randomly selecting the st between the bin range. "bin" for using st=bin value (constant value),
-                      img_sampling_type='weighted'  # 'weighted' to use a "normal"-like distribution to sample images close to st. 'random' to randomly select any images (uniform distribution)
+                      img_sampling_type='normal'  # 'normal' to use a "normal"-like distribution to sample images close to st. 'random' to randomly select any images (uniform distribution)
                         ):
 
     # Retrieve all images in data folder
@@ -710,33 +710,13 @@ def create_zoom_dataset(crop_length=299,
     # Find range of each bin
     interval = (s_max - s_min) / n_bins
     # bins = np.arange(s_min, s_max + 1, interval)
-    s_t = np.zeros((n_bins, 1))
-
-    m = np.zeros((n_bins, 1))  # Counter
-    # Find S_t for each bin
-    for i in range(n_bins):
-        s_t[i] = s_min + ((i + 1) * interval)
-
-    for i, row in df_img.iterrows():
-        s_i = row['pix_per_len']
-        for j in range(n_bins):
-            # if j == 0:
-            #     low_bound = s_min
-            # else:
-            #     low_bound = s_t[j]
-
-            n=int(s_i*crop_length/s_t[j])
-            m[j]+=1
-
-            if m[j]>=patches_per_bin:
-                break
-        get_crops
-
+    s_t = [s_min+(i+1)*interval for i in range(n_bins)]
 
 
     # Build crop dataframe
+    print("Building Crop DataFrame...")
     crop_df = []
-    for st_bin in s_t:
+    for st_bin in tqdm(s_t):
         crop_df_for_st = {
             'original_fp': [],
             's_i': [],
@@ -746,49 +726,65 @@ def create_zoom_dataset(crop_length=299,
             'crop_corners': [],
             'n': []
         }
-        while patches_per_bin <= len(crop_df_for_st['original_fp']):
+        while patches_per_bin >= len(crop_df_for_st['original_fp']):
             if st_type == 'bin':
                 st = st_bin
             elif st_type == 'smooth':
                 st = random.uniform(st_bin, st_bin-interval)  # Get a random float number in the st bin range
             else:
                 raise ValueError(f"{st_type} not implemented. Please choose between 'bin' and 'smooth'.")
+            """"""""""""""""""
+            if img_sampling_type == 'random':
+                row = img_df.sample()
+            elif img_sampling_type == 'normal':
+                # define gaussian dist with mean s_t and std dev as original std dev/2
+                # for each row, plug each row in the gaussian equation (returns probability for that rows)
+                # this way, get the probability distribution using s_i, this will be the weights
+                mu=st
+                sigma = df_img['pix_per_len'].std()/2
+                prob_func = lambda x: 1/(sigma*(2*np.pi)**0.5)*(np.exp(-0.5*((x-mu)/sigma)**2))
 
-            img_sampling_type
+                # for each row, plug in s_i to get the corresponding weight
+                weights = prob_func(df_img['pix_per_len'])
+                row = df_img.sample(weights=weights)  # TODO: Check if this is working properly
+            else:
+                raise ValueError(f"{img_sampling_type} not implemented. Please choose between 'random' and 'weighted'.")
+            """"""""""""""""""
 
-            row = img_df.sample()  # TODO: Weighted random distribution (tend it towards s_t)
-            s_i = row['pix_per_len']
-            marker_corners = row['corners']
-            original_fp = row['original_fp']
+            s_i = row['pix_per_len'].tolist()[0]
+            marker_corners = row['corners'].tolist()[0]
+            original_fp = row['original_fp'].tolist()[0]
             n = int(s_i * crop_length / st)
+
+            f_list = original_fp.split('/')
+            idx = f_list.index(data_folder)
+            f_list = f_list[idx - len(f_list) + 1:-1]
+
             crops = attempt_find_valid_crops(marker_corners, margin, m_patches, n, original_fp, attempts)
-            if not crops: # If we found crops
-                for crop in crops:
+            if crops: # If we found crops
+                for idx, crop in enumerate(crops):
                     crop_df_for_st['original_fp'].append(original_fp)
                     crop_df_for_st['s_i'].append(s_i)
                     crop_df_for_st['file'].append(os.path.join(out_folder, 'cropped', '/'.join(f_list),
-                                          f"{img.split('.')[-2].split('/')[-1]}_crop_{c + len(new_crops)}.JPG")) # TODO: FIX THIS set up the file name as the scale value
-                                                                                                                 # TODO: same scale, the images should be similar
+                                          f"st_{np.round(st, 1)}_si_{np.round(s_i, 1)}_{original_fp.split('.')[-2].split('/')[-1]}_crop_{idx}.JPG")) # TODO: Check for correct function
                     crop_df_for_st['pix_per_len'].append(st)
                     crop_df_for_st['units'].append(units)
                     crop_df_for_st['crop_corners'].append(crop)
                     crop_df_for_st['n'].append(n)
-
-            # Generate and show an example of patches
-            # Train an example
+        crop_df.append(pd.DataFrame(crop_df_for_st))
+    crop_df = pd.concat(crop_df)
+    crop_df.to_csv(f'{out_folder}/crop_dataset.csv', index=False)
 
     # TODO: EXTRACT patches
-    # Extract m patches (count, say, 100) for each S_t
-    # for each patch
-        # randomly select an image use s_i (of that image) and S_t (of that bin) to calculate n (size of patch)
-        # find valid patch(s) (N of them) (that don't overlap with the marker)
-            # For this, can you add a unique identifier in the crop_df so that we can identify which patches were extracted together?
-        # caveat: Sometimes no valid region for a patch size n may exist. So you should implement an try for A times, if not, randomly select a new image.
-        get_crops  # restricted_area: marker corners, n_crops=1, margin (around 30?)
-        # Store them in dataframe (patch_df) (img path, corners of the marker, corners of a single patch)
+    print("Extracting Patches...")
+    for idx, row in tqdm(crop_df.iterrows(), total=len(crop_df)):
+        crop_corners = row['crop_corners']
+        image = cv2.imread(row['original_fp'])
+        new_crop = get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), np.expand_dims(np.array(crop_corners), axis=1), row['n'], row['n'])
+        cv2.imwrite(row['file'], new_crop)
+
 
     # Ideas for later:
-    # Finer bins (for a more varied n)
     # Extract m patches from each image for as any bins as possible and then equalize the histogram using the random image selection algorithm
     # Extract patches from s_i closest to s_t first, and then extract using randomly selected images of which can have significantly different s_i (this is because s_i closest to s_t is the "best" representative samples for that bin)
 
@@ -801,6 +797,10 @@ if __name__ == '__main__':
     #                       # equalize_distribution=True
     #                       )
 
+    create_zoom_dataset(overall_folder='../datasets/PED_V2/', # folder that contains raw data
+                          out_folder='../datasets/PED_V2/test_zoom_generator',  # contains cropped dataset
+                        img_df='../datasets/PED_V2/2_processed/train_img_dataset.csv'
+                        )
 
     # # PED_V2 BRIDGE 100
     # create_n_by_n_markers_from_df(n_crops=1, m_patches=50, overall_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_test_100_final', img_df='../datasets/PED_V2/2_processed/test_img_dataset.csv', crop_height=100, crop_width=100, marker_len=9.4)
@@ -808,12 +808,16 @@ if __name__ == '__main__':
     # # PED_V2 BRIDGE 350
     # create_n_by_n_markers_from_df(n_crops=1, m_p atches=50, overall_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_test_350_final', img_df='../datasets/PED_V2/2_processed/test_img_dataset.csv', crop_height=350, crop_width=350, marker_len=9.4)
     # create_n_by_n_markers_from_df_equalize_distribution(n_crops=1, m_patches=15, overall_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_train_350_final', img_df='../datasets/PED_V2/2_processed/train_img_dataset.csv', crop_height=350, crop_width=350, marker_len=9.4)
+
+
     # # PED_V2 BRIDGE 850
-    create_n_by_n_markers(n_crops=1, m_patches=50,  # 50 patches per image
-                          overall_folder='../datasets/PED_V2/', # folder that contains raw data
-                          out_folder='../datasets/PED_V2/testing',  # contains cropped dataset
-                          # img_df='../datasets/PED_V2/2_processed/test_img_dataset.csv',
-                          crop_height=850, crop_width=850, marker_len=9.4)
+    # create_n_by_n_markers(n_crops=1, m_patches=50,  # 50 patches per image
+    #                       overall_folder='../datasets/PED_V2/', # folder that contains raw data
+    #                       out_folder='../datasets/PED_V2/testing',  # contains cropped dataset
+    #                       img_df='../datasets/PED_V2/2_processed/test_img_dataset.csv',
+    #                       crop_height=850, crop_width=850, marker_len=9.4)
+
+
     # create_n_by_n_markers_from_df_equalize_distribution(n_crops=1, m_patches=15, overall_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_train_850_final', img_df='../datasets/PED_V2/2_processed/train_img_dataset.csv', crop_height=850, crop_width=850, marker_len=9.4)
     # # ASH
     # create_n_by_n_markers_from_df(n_crops=1, m_patches=50, overall_folder='../datasets/ASH/', out_folder='../datasets/ASH/3_test_final', img_df='../datasets/ASH/2_processed/test_img_dataset.csv', crop_height=850, crop_width=850)
