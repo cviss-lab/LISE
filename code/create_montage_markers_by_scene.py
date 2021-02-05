@@ -48,7 +48,7 @@ def make_dir(pths):
         os.makedirs(pths)
 
 
-def detect_marker(image, img, aruco_dict, parameters):
+def detect_marker(image, img, aruco_dict, parameters, skip_manual_marker_selection):
     """
     Using aruco algorithm, automatically find the marker.
     Assumption: There is always a marker of interest in the image
@@ -82,12 +82,20 @@ def detect_marker(image, img, aruco_dict, parameters):
     if len(corners) == 0:
         print("Found no markers in file: {}".format(img))
         # Manually find marker
-        corners = manually_select_marker(image)
+        if skip_manual_marker_selection:
+            return None, False
+        else:
+            # Manually find marker
+            corners = manually_select_marker(image)
         # corners = False
     elif len(corners) > 1:
         print("Found more than 1 markers in file: {}".format(img))
         # Manually find marker
-        corners = manually_select_marker(image)
+        if skip_manual_marker_selection:
+            return None, False
+        else:
+            # Manually find marker
+            corners = manually_select_marker(image)
         # corners = False
     else:
         corners = corners[0][0]
@@ -422,11 +430,7 @@ def get_pix_per_len(corners, marker_len):
         dist.extend(tmp_dist)
     return np.average(dist) / marker_len
 
-
-def extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units, crop_height, crop_width, n_crops, m_patches, equalize_distribution):
-    # Initialize container for holding patch-wise information
-    df_crop = {"original_fp": [], 'file': [], "pix_per_len": [], 'units': []}
-
+def create_df_img(files, img_df, skip_manual_marker_selection, marker_len, out_folder, units):
     # If path to a dataframe containing marker information is provided, read the csv.
     if img_df is not None:
         df_img = pd.read_csv(img_df)
@@ -447,10 +451,15 @@ def extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_
             # Read image
             image = cv2.imread(img)
             # Detect marker
-            corners = detect_marker(image, img, aruco_dict, parameters)
+            corners, found_corners = detect_marker(image, img, aruco_dict, parameters, skip_manual_marker_selection)
+            if not found_corners:
+                continue
             # If the marker detection algorithm didn't work, manually select the marker
             if isinstance(corners, bool):
-                corners = manually_select_marker(image)
+                if skip_manual_marker_selection:
+                    continue
+                else:
+                    corners = manually_select_marker(image)
             else:
                 cont = False
                 for c in corners:
@@ -458,7 +467,10 @@ def extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_
                         cont = True
                         break
                 if cont:
-                    corners = manually_select_marker(image)
+                    if skip_manual_marker_selection:
+                        continue
+                    else:
+                        corners = manually_select_marker(image)
 
             # Get pix_per_len
             pix_per_len = get_pix_per_len(corners, marker_len)
@@ -468,7 +480,10 @@ def extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_
                     print(f"Skipped {img}, pix_per_len = {pix_per_len}")
                     continue
                 else:
-                    corners = manually_select_marker(image)
+                    if skip_manual_marker_selection:
+                        continue
+                    else:
+                        corners = manually_select_marker(image)
                     pix_per_len = get_pix_per_len(corners, marker_len)
 
             # Save marker information
@@ -480,6 +495,13 @@ def extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_
         # Write image dataframe
         df_img = pd.DataFrame(df_img)
         df_img.to_csv(f'{out_folder}/img_dataset.csv', index=False)
+        return df_img
+
+def extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units, crop_height, crop_width, n_crops, m_patches, equalize_distribution, skip_manual_marker_selection):
+    # Initialize container for holding patch-wise information
+    df_crop = {"original_fp": [], 'file': [], "pix_per_len": [], 'units': []}
+
+    df_img = create_df_img(files, img_df, skip_manual_marker_selection, marker_len, out_folder, units)
 
     # If equalize distribution is on, then calculate historgram of image scales
     if equalize_distribution:
@@ -566,7 +588,8 @@ def create_n_by_n_markers(crop_width=299,
                           data_folder='1_data',
                           out_folder='datasets/9_all_data_compiled/5by5/',
                           img_df=None,
-                          equalize_distribution=False):
+                          equalize_distribution=False,
+                          skip_manual_marker_selection=True):
     """
     From a set of collected images categorized into scenes (e.g., 1 folder contains images pertaining to 1 unique scene), create a patch-image scale dataset by:
         Option 1) Running a marker detection algorithm to detect markers, compute the pixel per length metric, and extract m patches per image.
@@ -602,13 +625,57 @@ def create_n_by_n_markers(crop_width=299,
 
     # Extract crops to form the patch dataset
     if img_df is None:
-        df_crop, df_img = extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units, crop_height, crop_width, n_crops, m_patches, equalize_distribution)
+        df_crop, df_img = extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units, crop_height, crop_width, n_crops, m_patches, equalize_distribution, skip_manual_marker_selection)
     else:
-        df_crop = extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units, crop_height, crop_width, n_crops, m_patches, equalize_distribution)
+        df_crop = extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units, crop_height, crop_width, n_crops, m_patches, equalize_distribution,  skip_manual_marker_selection)
 
     # Save crop dataframes
     df_crop = pd.DataFrame(df_crop)
     df_crop.to_csv(f'{out_folder}/crop_dataset.csv', index=False)
+
+def create_zoom_dataset(crop_width=299,
+                      crop_height=299,
+                      m_patches=10,
+                      marker_len=10.0,  # 10
+                      units='cm',
+                      overall_folder='datasets/9_all_data_compiled/',
+                      data_folder='1_data',
+                      out_folder='datasets/9_all_data_compiled/5by5/',
+                      img_df=None,
+                      equalize_distribution=False,
+                      skip_manual_marker_selection=True):
+    # Read or create df_img dataframe
+    create_df_img
+    # Find min and max scale
+
+    # Specify the number of bins b/w Smin and Smax
+
+    # Find range of each bin
+
+    # Find S_t for each bin
+
+    # Extract m patches (count, say, 100) for each S_t
+    # for each patch
+        # randomly select an image use s_i (of that image) and S_t (of that bin) to calculate n (size of patch)
+        # find valid patch(s) (N of them) (that don't overlap with the marker)
+            # For this, can you add a unique identifier in the crop_df so that we can identify which patches were extracted together?
+        # caveat: Sometimes no valid region for a patch size n may exist. So you should implement an try for A times, if not, randomly select a new image.
+        get_crops  # restricted_area: marker corners, n_crops=1, margin (around 30?)
+        # Store them in dataframe (patch_df) (img path, corners of the marker, corners of a single patch)
+
+    # Go through each row of patch_df and extract the patches (write them to a folder)
+    get_crop
+
+    # Output shoudl be:
+        # CSV similar to crop_df (with original scale (S_i) and the modified scale S_t)
+            original_fp	file	pix_per_len	units identifier
+
+        # Folder containin patches by scene
+            # CROPS
+                # 1 - scene
+                    # patch1.png
+                    # patch2.png
+                # 2
 
 
 if __name__ == '__main__':

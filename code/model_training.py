@@ -15,7 +15,7 @@ from sklearn.model_selection import KFold
 from tqdm import tqdm
 from tensorflow.keras.layers import LeakyReLU
 from custom_loss_functions import mape_0_to_1, weighted_mape
-
+from custom_data_generator import MultiPatchDataGenerator
 
 class CNN_model:
     def __init__(self,
@@ -40,7 +40,11 @@ class CNN_model:
                  testing=False,
                  tmp=None,
                  x_name='file',
-                 y_name='pix_per_len'):
+                 y_name='pix_per_len',
+                 shuffle=True,
+                 model_type='single',
+                 N_patches_per_set=3,
+                 shuffle_patches=True):
         """
         A basic keras-based CNN regression model trainer.
 
@@ -83,7 +87,11 @@ class CNN_model:
         :boolean norm_labels:
         :None||string retrain:
         :int dataset_size:
+        :bool shuffle: Set true to shuffle training dataset at the end of each epoch
         :int or None kfold: if a number is specified, training proceeds as a k-fold
+        :str model_type: "single" or "multi", used to indicate whether to train a single patch or multipatch input model
+        :int N_patches_per_set: if model_type is "multi", the value of N_patches_per_set is the number of patches per set
+        :bool patches_shuffle: For multipatch model. Set true to shuffle the patches within each set of the training dataset at the end of each epoch
         """
         # Append "_" to prefix if user specifies one
         if prefix != '':
@@ -120,6 +128,10 @@ class CNN_model:
         self.testing = testing
         self.x_name = x_name
         self.y_name = y_name
+        self.model_type = model_type
+        self.shuffle = shuffle
+        self.shuffle_patches = shuffle_patches
+        self.N_patches_per_set = N_patches_per_set
         # Update all paths related to output_path
         self.update_output_pth(output_pth)
 
@@ -371,6 +383,7 @@ class CNN_model:
             self.image_augmentations['featurewise_std_normalization'] = True
             self.test_image_augmentations['featurewise_center'] = True
             self.test_image_augmentations['featurewise_std_normalization'] = True
+
         datagen = ImageDataGenerator(preprocessing_function=self.preprocess_input, **self.image_augmentations)
         test_datagen = ImageDataGenerator(preprocessing_function=self.preprocess_input, **self.test_image_augmentations)
         if self.img_norm == 'mean_and_std':
@@ -382,36 +395,48 @@ class CNN_model:
             else:
                 datagen.mean = np.array(self.img_mean_pt, dtype=np.float32).reshape((1, 1, 3))  # ordering: [R, G, B]
                 datagen.std = np.array(self.img_std_pt, dtype=np.float32).reshape((1, 1, 3))  # ordering: [R, G, B]
-                test_datagen.mean = np.array(self.img_mean_pt, dtype=np.float32).reshape((1, 1, 3))  # ordering: [R, G, B]
+                test_datagen.mean = np.array(self.img_mean_pt, dtype=np.float32).reshape(
+                    (1, 1, 3))  # ordering: [R, G, B]
                 test_datagen.std = np.array(self.img_std_pt, dtype=np.float32).reshape((1, 1, 3))  # ordering: [R, G, B]
+
         # Set-up callback
-        callbacks_list = [ModelCheckpoint(self.model_pth, verbose=1, period=5), ModelCheckpoint(self.model_best_pth, verbose=1, save_best_only=True), CSVLogger(os.path.join(self.output_pth, 'hist.csv'))]
-        # Create Data Generators
-        if self.greyscale:
-            train_generator = datagen.flow_from_dataframe(dataframe=train_data, directory=None,
-                                                          x_col=self.x_name, y_col=self.y_name,
-                                                          batch_size=self.batch_size, seed=self.random_state,
-                                                          shuffle=True,
-                                                          class_mode="raw",
-                                                          target_size=(self.model_img_width, self.model_img_height), color_mode='grayscale')
-            valid_generator = test_datagen.flow_from_dataframe(dataframe=test_data, directory=None,
-                                                               x_col=self.x_name, y_col=self.y_name,
-                                                               batch_size=self.batch_size, seed=self.random_state,
-                                                               shuffle=False,
-                                                               class_mode="raw",
-                                                               target_size=(
-                                                               self.model_img_width, self.model_img_height), color_mode='grayscale')
+        callbacks_list = [ModelCheckpoint(self.model_pth, verbose=1, period=5),
+                          ModelCheckpoint(self.model_best_pth, verbose=1, save_best_only=True),
+                          CSVLogger(os.path.join(self.output_pth, 'hist.csv'))]
+        if self.model_type == 'single':
+            # Create Data Generators
+            if self.greyscale:
+                train_generator = datagen.flow_from_dataframe(dataframe=train_data, directory=None,
+                                                              x_col=self.x_name, y_col=self.y_name,
+                                                              batch_size=self.batch_size, seed=self.random_state,
+                                                              shuffle=self.shuffle,
+                                                              class_mode="raw",
+                                                              target_size=(self.model_img_width, self.model_img_height), color_mode='grayscale')
+                valid_generator = test_datagen.flow_from_dataframe(dataframe=test_data, directory=None,
+                                                                   x_col=self.x_name, y_col=self.y_name,
+                                                                   batch_size=self.batch_size, seed=self.random_state,
+                                                                   shuffle=False,
+                                                                   class_mode="raw",
+                                                                   target_size=(
+                                                                   self.model_img_width, self.model_img_height), color_mode='grayscale')
+            else:
+                train_generator = datagen.flow_from_dataframe(dataframe=train_data, directory=None,
+                                                              x_col=self.x_name, y_col=self.y_name,
+                                                              batch_size=self.batch_size, seed=self.random_state, shuffle=self.shuffle,
+                                                              class_mode="raw",
+                                                              target_size=(self.model_img_width, self.model_img_height))
+                valid_generator = test_datagen.flow_from_dataframe(dataframe=test_data, directory=None,
+                                                                   x_col=self.x_name, y_col=self.y_name,
+                                                                   batch_size=self.batch_size, seed=self.random_state, shuffle=False,
+                                                                   class_mode="raw",
+                                                                   target_size=(self.model_img_width, self.model_img_height))
+        elif self.model_type == 'multi':
+            train_generator = MultiPatchDataGenerator(train_data, self.N_patches_per_set, datagen, self.greyscale, self.batch_size, (self.model_img_width, self.model_img_height), self.shuffle, self.shuffle_patches)
+            valid_generator = MultiPatchDataGenerator(test_data, self.N_patches_per_set, datagen, self.greyscale, self.batch_size, (self.model_img_width, self.model_img_height), False, False)
         else:
-            train_generator = datagen.flow_from_dataframe(dataframe=train_data, directory=None,
-                                                          x_col=self.x_name, y_col=self.y_name,
-                                                          batch_size=self.batch_size, seed=self.random_state, shuffle=True,
-                                                          class_mode="raw",
-                                                          target_size=(self.model_img_width, self.model_img_height))
-            valid_generator = test_datagen.flow_from_dataframe(dataframe=test_data, directory=None,
-                                                               x_col=self.x_name, y_col=self.y_name,
-                                                               batch_size=self.batch_size, seed=self.random_state, shuffle=False,
-                                                               class_mode="raw",
-                                                               target_size=(self.model_img_width, self.model_img_height))
+            raise ValueError(f"Unknown model type {self.model_type}! Please choose either 'single' or 'multi'.")
+
+
         H = model.fit_generator(generator=train_generator,
                                 steps_per_epoch=len(train_data) // self.batch_size,
                                 validation_data=valid_generator,
@@ -449,25 +474,39 @@ class CNN_model:
                 test_datagen.mean = np.array(self.img_mean_pt, dtype=np.float32).reshape((1, 1, 3))  # ordering: [R, G, B]
                 test_datagen.std = np.array(self.img_std_pt, dtype=np.float32).reshape((1, 1, 3))  # ordering: [R, G, B]
         # Create Data Generators
-        if self.greyscale:
-            valid_generator = test_datagen.flow_from_dataframe(dataframe=data, directory=None,
-                                                           x_col=self.x_name, y_col=self.y_name,
-                                                           batch_size=self.batch_size, seed=self.random_state, shuffle=False,
-                                                           class_mode="other",
-                                                           target_size=(self.model_img_width, self.model_img_height), color_mode='grayscale')
+        if self.model_type == 'single':
+            if self.greyscale:
+                valid_generator = test_datagen.flow_from_dataframe(dataframe=data, directory=None,
+                                                               x_col=self.x_name, y_col=self.y_name,
+                                                               batch_size=self.batch_size, seed=self.random_state, shuffle=False,
+                                                               class_mode="other",
+                                                               target_size=(self.model_img_width, self.model_img_height), color_mode='grayscale')
+            else:
+                valid_generator = test_datagen.flow_from_dataframe(dataframe=data, directory=None,
+                                                               x_col=self.x_name, y_col=self.y_name,
+                                                               batch_size=self.batch_size, seed=self.random_state,
+                                                               shuffle=False,
+                                                               class_mode="other",
+                                                               target_size=(self.model_img_width, self.model_img_height))
+        elif self.model_type == 'multi':
+            valid_generator = MultiPatchDataGenerator(data, self.N_patches_per_set, test_datagen, self.greyscale, self.batch_size, (self.model_img_width, self.model_img_height), False, False)
         else:
-            valid_generator = test_datagen.flow_from_dataframe(dataframe=data, directory=None,
-                                                           x_col=self.x_name, y_col=self.y_name,
-                                                           batch_size=self.batch_size, seed=self.random_state,
-                                                           shuffle=False,
-                                                           class_mode="other",
-                                                           target_size=(self.model_img_width, self.model_img_height))
+            raise ValueError(f"Model type: {self.model_type} not implemented.")
+
         # Predict
         if self.norm_labels:
             print(f"mean: {self.mean_pt} std: {self.std_pt}")
-            return model.predict_generator(valid_generator, steps=np.ceil(len(data)/self.batch_size), verbose=1) * self.std_pt + self.mean_pt
+            predictions = model.predict_generator(valid_generator, steps=np.ceil(len(data)/self.batch_size), verbose=1) * self.std_pt + self.mean_pt
+            if self.model_type == 'multi':
+                return valid_generator._get_patch_set_dataframe(), predictions
+            else:
+                return predictions
         else:
-            return model.predict_generator(valid_generator, steps=np.ceil(len(data)/self.batch_size), verbose=1)
+            predictions = model.predict_generator(valid_generator, steps=np.ceil(len(data)/self.batch_size), verbose=1)
+            if self.model_type == 'multi':
+                return valid_generator._get_patch_set_dataframe(), predictions
+            else:
+                return predictions
 
     def assess_predictions(self, imgs, actual, predicted):
         # Remove old predicted folder
@@ -613,8 +652,12 @@ def __load_and_run_model_and_save_results(cnn, train_data, test_data):
     cnn.retrain = cnn.model_pth
     model = cnn.load_model(train_data)
     # Generate test predictions
-    predictions = cnn.generate_predictions(model, test_data)
+    if cnn.model_type == 'multi':
+        test_data, predictions = cnn.generate_predictions(model, test_data)
+    else:
+        predictions = cnn.generate_predictions(model, test_data)
     # Output image results
+    # TODO: Work from here downwards
     cnn.output_image_results(test_data, test_data['pix_per_len'].values, predictions)
     # Output DataFrame results
     test_data['predicted_pix_per_len'] = predictions
