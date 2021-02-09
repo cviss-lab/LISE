@@ -2,7 +2,7 @@
 import os, shutil, pickle, cv2, errno, json
 from tensorflow.keras import applications
 from tensorflow.keras.backend import clear_session
-from tensorflow.keras.layers import Dense, GlobalAveragePooling2D
+from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.preprocessing.image import ImageDataGenerator, img_to_array, Iterator
 from tensorflow.keras.optimizers import SGD
@@ -45,7 +45,8 @@ class CNN_model:
                  shuffle=True,
                  model_type='single',
                  N_patches_per_set=3,
-                 shuffle_patches=True):
+                 shuffle_patches=True,
+                 model_weights=None):
         """
         A basic keras-based CNN regression model trainer.
 
@@ -133,6 +134,7 @@ class CNN_model:
         self.shuffle = shuffle
         self.shuffle_patches = shuffle_patches
         self.N_patches_per_set = N_patches_per_set
+        self.model_weights = model_weights
         # Update all paths related to output_path
         self.update_output_pth(output_pth)
 
@@ -153,20 +155,22 @@ class CNN_model:
         plt.legend(legend, loc='upper left')
         plt.savefig(os.path.join(self.output_pth, self.__append_prefix(name)))
 
-    def plot_actual_to_predicted(self, data, name='plot_a_vs_p.jpg'):
+    def plot_actual_to_predicted(self, data, name='plot_a_vs_p.jpg', y_name=None):
+        if y_name is None:
+            y_name = self.y_name
         plt.figure(dpi=400)
-        plt.scatter(data[self.y_name].values, data[f'predicted_{self.y_name}'].values, color='blue', s=2)
-        order = np.argsort(data[self.y_name].values)
-        xs = np.array(data[self.y_name].values)[order]
+        plt.scatter(data[y_name].values, data[f'predicted_{y_name}'].values, color='blue', s=2)
+        order = np.argsort(data[y_name].values)
+        xs = np.array(data[y_name].values)[order]
         plt.plot(xs, xs, color='red')
-        plt.xlim([data[[f'predicted_{self.y_name}', self.y_name]].values.min(),
-                  data[[f'predicted_{self.y_name}', self.y_name]].values.max()])
-        plt.ylim([data[[f'predicted_{self.y_name}', self.y_name]].values.min(),
-                  data[[f'predicted_{self.y_name}', self.y_name]].values.max()])
-        plt.xlabel(self.y_name)
-        plt.ylabel(f"predicted_{self.y_name}")
-        y_true = data[self.y_name].values
-        y_pred = data[f'predicted_{self.y_name}'].values
+        plt.xlim([data[[f'predicted_{y_name}', y_name]].values.min(),
+                  data[[f'predicted_{y_name}', y_name]].values.max()])
+        plt.ylim([data[[f'predicted_{y_name}', y_name]].values.min(),
+                  data[[f'predicted_{y_name}', y_name]].values.max()])
+        plt.xlabel(y_name)
+        plt.ylabel(f"predicted_{y_name}")
+        y_true = data[y_name].values
+        y_pred = data[f'predicted_{y_name}'].values
         plt.title(f"MAE: {np.round(mean_absolute_error(y_true, y_pred))}")
         plt.savefig(os.path.join(self.output_pth, self.__append_prefix(name)))
 
@@ -343,14 +347,15 @@ class CNN_model:
             if self.model_type == 'multi':
                 base_model = applications.MobileNetV2(
                     input_shape=(self.model_img_width, self.model_img_height, self.N_patches_per_set*self.model_img_channels),
-                    weights=None, include_top=False)
+                    weights=self.model_weights, include_top=False)
             else:
                 base_model = applications.MobileNetV2(
                     input_shape=(self.model_img_width, self.model_img_height, self.model_img_channels),
-                    weights=None, include_top=False)
+                    weights=self.model_weights, include_top=False)
 
             x = GlobalAveragePooling2D()(base_model.output)
             x = Dense(1280)(x)  # add a fully-connected layer
+            x = Dropout(0.5)(x) # added a dropout layer to prevent overfitting
             x = Dense(1, name='predictions')(x)
             predictions = LeakyReLU(alpha=0.3)(x)
 
@@ -453,7 +458,7 @@ class CNN_model:
                                 validation_data=valid_generator,
                                 validation_steps=len(test_data) // self.batch_size,
                                 epochs=self.epochs, verbose=1,
-                                callbacks=callbacks_list, workers=12)
+                                callbacks=callbacks_list)
         return H, model
 
     def __append_prefix(self, name):
@@ -689,11 +694,13 @@ def __load_and_run_model_and_save_results(cnn, train_data, test_data):
     # Save actual vs predicted plot
     cnn.plot_actual_to_predicted(test_data, 'plot.jpg')
     # Aggregate and plot results
-    agg_test_data = test_data.groupby(["original_fp"]).mean()
+    agg_test_data = test_data.groupby(["original_fp", 'pix_per_len']).mean()
+    agg_test_data.reset_index(inplace=True)
     cnn.save_dataframe_results(agg_test_data, "test_agg_mean.csv")
     cnn.plot_actual_to_predicted(agg_test_data, 'plot_agg_mean.jpg')
     # Aggregate and plot results
-    agg_test_data = test_data.groupby(["original_fp"]).median()
+    agg_test_data = test_data.groupby(["original_fp", 'pix_per_len']).median()
+    agg_test_data.reset_index(inplace=True)
     cnn.save_dataframe_results(agg_test_data, "test_agg_median.csv")
     cnn.plot_actual_to_predicted(agg_test_data, 'plot_agg_median.jpg')
     # Clear GPU memory
@@ -731,10 +738,12 @@ def train_model(config, test_data_pth=None):
         __load_and_run_model_and_save_results(train_cnn, train_data, test_data)
 
 
-def test_model(config):
+def test_model(config, mode=None, crop_length=550):
     """
     Assumes the folder location of the model contains the model tranining information.
-    :param config:
+    :param config: CNN configuration dictionary
+    :param mode: testing mode. None is default (simple test), 'zoom_implementation' is for testing how using zoom images influences model results
+    :param crop_length: for testing mode "zoom_implementation", the base crop length used for generating the testing dataset
     :return:
     """
     # Initialize model trainer
@@ -760,18 +769,33 @@ def test_model(config):
     # Load and Train model
     model = test_cnn.load_model(data)
     # Generate test predictions
-    predictions = test_cnn.generate_predictions(model, data)
+    if test_cnn.model_type == 'multi':
+        test_data, predictions = test_cnn.generate_predictions(model, data)
+    else:
+        predictions = test_cnn.generate_predictions(model, data)
     # Output image results
     test_cnn.output_image_results(data, data['pix_per_len'], predictions)
     # Output DataFrame results
     data['predicted_pix_per_len'] = predictions
-    test_cnn.save_dataframe_results(data, 'data.csv')
+    if mode == 'zoom_implementation':
+        data['predicted_s_i'] = data['predicted_pix_per_len'] * data['n'] / crop_length
+        # Save actual vs predicted plot
+        test_cnn.plot_actual_to_predicted(data, 'plot_s_i_zoom_implementation.jpg', 's_i')
+        # Aggregate and plot results
+        agg_test_data = data.groupby(["original_fp", 's_i']).mean()
+        agg_test_data.reset_index(inplace=True)
+        test_cnn.save_dataframe_results(agg_test_data, "test_agg_mean_test_zoom_implementation.csv")
+        test_cnn.plot_actual_to_predicted(agg_test_data, 'plot_agg_mean_zoom_implementation.jpg')
+
+    test_cnn.save_dataframe_results(data, 'test.csv')
     # Save actual vs predicted plot
     test_cnn.plot_actual_to_predicted(data, 'plot.jpg')
     # Aggregate and plot results
-    agg_test_data = data.groupby("original_fp").mean()
+    agg_test_data = data.groupby(["original_fp", 'pix_per_len']).mean()
+    agg_test_data.reset_index(inplace=True)
     test_cnn.save_dataframe_results(agg_test_data, "test_agg_mean.csv")
     test_cnn.plot_actual_to_predicted(agg_test_data, 'plot_agg_mean.jpg')
+
 
     test_cnn.save_cnn_training_parameters('test_config.json')
     # Clear GPU memory
@@ -784,49 +808,96 @@ if __name__ == '__main__':
     """
     # Montage Training - uwb
     train = [
-        # Sample
-        ('../output/PED_multi_test', "../datasets/PED_V2/3_train_850_final/crop_dataset.csv", 'mape', 0.001, 'reg', "../datasets/PED_V2/3_test_850_final/crop_dataset.csv"),
-        # # ASH_V2
-        # ('../output/ASH_V2_speed_test', "../datasets/ASH_V2/3_train_final/crop_dataset.csv", 'mape', 0.001, 'reg', "../datasets/ASH_V2/3_test_final/crop_dataset.csv"),
-        # # 850
-        # ('../output/PED_V2_850', "../datasets/PED_V2/3_train_850_final/crop_dataset.csv", 'mape', 0.001, 'reg', "../datasets/PED_V2/3_test_850_final/crop_dataset.csv"),
-        # # BW
-        # ('../output/BW', "../datasets/BW/3_train_final/crop_dataset.csv", 'mape', 0.001, 'reg', "../datasets/BW/3_test_final/crop_dataset.csv"),
-        # # 100
-        # ('../output/PED_V2_100', "../datasets/PED_V2/3_train_100_final/crop_dataset.csv", 'mape', 0.001, 'reg', "../datasets/PED_V2/3_test_100_final/crop_dataset.csv"),
-        # # 350
-        # ('../output/PED_V2_350', "../datasets/PED_V2/3_train_350_final/crop_dataset.csv", 'mape', 0.001, 'reg', "../datasets/PED_V2/3_test_350_final/crop_dataset.csv"),
+        {
+          'output_pth': '../output/PED_testing_3',
+          'pth_to_labels': "../datasets/PED_V2/testing_3_train_set/crop_dataset_base_crop_length_550.csv",
+          'lf_setting': 'mape',
+            'learning_rate': 0.001,
+            'tmp': 'reg',
+            "test_dataset_path": "../datasets/PED_V2/testing_2_test_set/crop_dataset_base_crop_length_550.csv"
+        },
+        # {
+        #   'output_pth': '../output/PED_testing_1_lower_lr',
+        #   'pth_to_labels': "../datasets/PED_V2/testing_1_train_set/crop_dataset_base_crop_length_550.csv",
+        #   'lf_setting': 'mape',
+        #     'learning_rate': 0.001,
+        #     'tmp': 'reg',
+        #     "test_dataset_path": "../datasets/PED_V2/testing_1_test_set/crop_dataset_base_crop_length_550.csv"
+        # },
+        # {
+        #     'output_pth': '../output/PED_testing_2_lower_lr',
+        #     'pth_to_labels': "../datasets/PED_V2/testing_2_train_set/crop_dataset_base_crop_length_550.csv",
+        #     'lf_setting': 'mape',
+        #     'learning_rate': 0.001,
+        #     'tmp': 'reg',
+        #     "test_dataset_path": "../datasets/PED_V2/testing_2_test_set/crop_dataset_base_crop_length_550.csv"
+        # },
     ]
     train_config = {
-        "epochs": 50,
+        "epochs": 150,
         "output_pth": '',
         "pth_to_labels": "",
         'img_norm': '-1_to_+1',
         'norm_labels': False,
         'greyscale': True,
         "lf_setting": 'mape',
-        'learning_rate': 0.001,
+        'learning_rate': 0.0001,
         "image_augmentations": {
             "channel_shift_range": 50.0,
             "brightness_range": [0.8, 1.2],
             "horizontal_flip": True,
             "vertical_flip": True,
         },
-        "model_type": 'multi'
+        "model_type": 'single',
+        "model_weights": None  # or 'imagenet' for imagenet, greyscale needs to be set of False
     }
     for t in train:
-        train_config['output_pth'] = t[0]
-        train_config['pth_to_labels'] = t[1]
-        train_config['lf_setting'] = t[2]
-        train_config['learning_rate'] = t[3]
-        train_config['tmp'] = t[4]
-        train_model(train_config, t[5])  # Custom test data set
+        for key, value in t.items():
+            if key != "test_dataset_path":
+                train_config[key] = value
+
+        if "test_dataset_path" in t.keys():
+            train_model(train_config, t["test_dataset_path"])  # Custom test data set
+        else:
+            train_model(train_config)  # Create a test data set from training data
 
     # Test DIFF and ZOOM on PED model
     # Montage Training - uwb
     test = [
-        # ('../output/DIFF',    "../datasets/DIFF/3_test_final/crop_dataset.csv", '../output/PED_V2_850/model.h5'),
-        # ('../output/ZOOM',    "../datasets/ZOOM/3_test_final/crop_dataset.csv", '../output/PED_V2_850/model.h5'),
+        # {
+        #     "output_pth": '../output/PED_testing_1_train',
+        #     "pth_to_labels": "../datasets/PED_V2/testing_1_train_set/crop_dataset_base_crop_length_550.csv",
+        #     'retrain': '../output/PED_testing_1/model.h5',
+        # },
+        # {
+        #     "output_pth": '../output/PED_testing_2_train',
+        #     "pth_to_labels": "../datasets/PED_V2/testing_2_train_set/crop_dataset_base_crop_length_550.csv",
+        #     'retrain': '../output/PED_testing_1/model.h5',
+        # },
+        # {
+        #     "output_pth": '../output/PED_testing_1_zoom_implementation',
+        #     "pth_to_labels": "../datasets/PED_V2/testing_zoom_agg_implementation/crop_dataset_base_crop_length_550.csv",
+        #     'retrain': '../output/PED_testing_1/model.h5',
+        #     'mode': 'zoom_implementation'
+        # },
+        # {
+        #     "output_pth": '../output/PED_testing_2_zoom_implementation',
+        #     "pth_to_labels": "../datasets/PED_V2/testing_zoom_agg_implementation/crop_dataset_base_crop_length_550.csv",
+        #     'retrain': '../output/PED_testing_2/model.h5',
+        #     'mode': 'zoom_implementation'
+        # },
+        # {
+        #     "output_pth": '../output/PED_testing_1_zoom_implementation_color_imagenet',
+        #     "pth_to_labels": "../datasets/PED_V2/testing_zoom_agg_implementation/crop_dataset_base_crop_length_550.csv",
+        #     'retrain': '../output/PED_testing_1_color_imagenet/model.h5',
+        #     'mode': 'zoom_implementation'
+        # },
+        # {
+        #     "output_pth": '../output/PED_testing_2_zoom_implementation_color_imagenet',
+        #     "pth_to_labels": "../datasets/PED_V2/testing_zoom_agg_implementation/crop_dataset_base_crop_length_550.csv",
+        #     'retrain': '../output/PED_testing_2_color_imagenet/model.h5',
+        #     'mode': 'zoom_implementation'
+        # }
     ]
     test_config = {
         "output_pth": '',
@@ -834,8 +905,14 @@ if __name__ == '__main__':
         'retrain': ''
     }
     for t in test:
-        test_config['output_pth'] = t[0]
-        test_config['pth_to_labels'] = t[1]
-        test_config['retrain'] = t[2]
-        test_model(test_config)
+        for key, value in t.items():
+            if key != 'mode':
+                test_config[key] = t[key]
+        if 'mode' in  t.keys():
+            if t['mode'] == 'zoom_implementation':
+                test_model(test_config, t['mode'])
+            else:
+                test_model(test_config)
+        else:
+            test_model(test_config)
 
