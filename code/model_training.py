@@ -673,7 +673,7 @@ def __load_and_run_model_and_save_results(cnn, train_data, test_data):
     agg_test_data = test_data.groupby(["original_fp", 'pix_per_len']).mean()
     agg_test_data.reset_index(inplace=True)
     cnn.save_dataframe_results(agg_test_data, "test_agg_mean.csv")
-    cnn.plot_actual_to_predicted(agg_test_data, 'plot_agg_mean.jpg')
+    cnn.plot_actual_to_predicted(agg_test_data, 'test_plot_agg_mean.jpg')
 
     agg_train_data = train_data.groupby(["original_fp", 'pix_per_len']).mean()
     agg_train_data.reset_index(inplace=True)
@@ -685,7 +685,7 @@ def __load_and_run_model_and_save_results(cnn, train_data, test_data):
     agg_test_data = test_data.groupby(["original_fp", 'pix_per_len']).median()
     agg_test_data.reset_index(inplace=True)
     cnn.save_dataframe_results(agg_test_data, "test_agg_median.csv")
-    cnn.plot_actual_to_predicted(agg_test_data, 'plot_agg_median.jpg')
+    cnn.plot_actual_to_predicted(agg_test_data, 'test_plot_agg_median.jpg')
 
     agg_train_data = train_data.groupby(["original_fp", 'pix_per_len']).median()
     agg_train_data.reset_index(inplace=True)
