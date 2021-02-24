@@ -1,5 +1,6 @@
 # import the necessary packages
-import os, shutil, pickle, cv2, errno, json
+import os, shutil, pickle, cv2, errno, json, time
+from tensorflow.keras import applications
 from tensorflow.keras import applications
 from tensorflow.keras.backend import clear_session
 from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
@@ -7,6 +8,7 @@ from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.preprocessing.image import ImageDataGenerator, img_to_array, Iterator
 from tensorflow.keras.optimizers import SGD
 from tensorflow.keras.callbacks import ModelCheckpoint, CSVLogger
+import tensorflow
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -17,6 +19,8 @@ from tensorflow.keras.layers import LeakyReLU
 from create_montage_markers_by_scene import montage_crops
 from custom_loss_functions import mape_0_to_1, weighted_mape
 from custom_data_generator import MultiPatchDataGenerator
+from create_montage_markers_by_scene import copytree
+from numpy.random import uniform, choice
 
 class CNN_model:
     def __init__(self,
@@ -46,7 +50,9 @@ class CNN_model:
                  model_type='single',
                  N_patches_per_set=3,
                  shuffle_patches=True,
-                 model_weights=None):
+                 model_weights=None,
+                 dropout=True,
+                 brightness_range=None):
         """
         A basic keras-based CNN regression model trainer.
 
@@ -67,7 +73,7 @@ class CNN_model:
         :float learning_rate: The learning rate of the classifer
         :string lf_setting: Specify the loss function in https://keras.io/losses/.
             For custom loss functions, add a function to custom_loss_functions.py and setup a if-statement in
-            __loss_function to set it to the custom loss function given a keyword of your choice.
+            loss_function to set it to the custom loss function given a keyword of your choice.
         :int epochs: Number of cycles to go through the dataset
         :int batch_size: The amount of images to use at once to update weights
         :string pth_to_labels: path to csv containing path to images and corresponding labels.
@@ -117,7 +123,10 @@ class CNN_model:
         self.img_norm = img_norm
         self.model_name = self.__append_prefix(model_name)
         self.greyscale = greyscale
-        self.output_pth = output_pth
+
+        output_pth = output_pth.split('/')
+        output_pth[-1] = time.strftime('%Y%m%d_%H%M%S') + "_" + output_pth[-1]
+        self.output_pth = '/'.join(output_pth)
         self.random_state = random_state
         self.retrain = retrain
         self.dataset_size = dataset_size
@@ -130,13 +139,18 @@ class CNN_model:
         self.testing = testing
         self.x_name = x_name
         self.y_name = y_name
+        self.dropout = dropout
         self.model_type = model_type
         self.shuffle = shuffle
         self.shuffle_patches = shuffle_patches
         self.N_patches_per_set = N_patches_per_set
         self.model_weights = model_weights
+        self.brightness_range = brightness_range
         # Update all paths related to output_path
-        self.update_output_pth(output_pth)
+        self.update_output_pth(self.output_pth)
+        # Set random states
+        np.random.RandomState(self.random_state)
+        tensorflow.random.set_seed(self.random_state)
 
     def update_output_pth(self, output_pth):
         self.output_pth = output_pth
@@ -345,6 +359,7 @@ class CNN_model:
         if self.retrain is None:  # Train new model
             # Import Base Model from Bag of Models
             if self.model_type == 'multi':
+
                 base_model = applications.MobileNetV2(
                     input_shape=(self.model_img_width, self.model_img_height, self.N_patches_per_set*self.model_img_channels),
                     weights=self.model_weights, include_top=False)
@@ -355,7 +370,8 @@ class CNN_model:
 
             x = GlobalAveragePooling2D()(base_model.output)
             x = Dense(1280)(x)  # add a fully-connected layer
-            x = Dropout(0.5)(x) # added a dropout layer to prevent overfitting
+            if self.dropout:
+                x = Dropout(0.5)(x) # added a dropout layer to prevent overfitting
             x = Dense(1, name='predictions')(x)
             predictions = LeakyReLU(alpha=0.3)(x)
 
@@ -364,7 +380,7 @@ class CNN_model:
             model.summary()
 
             sgd = SGD(lr=self.learning_rate, decay=0.01, momentum=0.9, nesterov=True)
-            model.compile(loss=self.__loss_function(), optimizer=sgd)
+            model.compile(loss=self.loss_function(), optimizer=sgd)
         else:  # Re-train model
             print(self.retrain)
             try:
@@ -464,7 +480,7 @@ class CNN_model:
     def __append_prefix(self, name):
         return f'{self.prefix}{name}'
 
-    def __loss_function(self):
+    def loss_function(self):
         """Check if I need to set a """
         if self.lf_setting == 'mape_0_to_1':
             return mape_0_to_1
@@ -495,14 +511,14 @@ class CNN_model:
                 valid_generator = test_datagen.flow_from_dataframe(dataframe=data, directory=None,
                                                                x_col=self.x_name, y_col=self.y_name,
                                                                batch_size=self.batch_size, seed=self.random_state, shuffle=False,
-                                                               class_mode="other",
+                                                               class_mode="raw",
                                                                target_size=(self.model_img_width, self.model_img_height), color_mode='grayscale')
             else:
                 valid_generator = test_datagen.flow_from_dataframe(dataframe=data, directory=None,
                                                                x_col=self.x_name, y_col=self.y_name,
                                                                batch_size=self.batch_size, seed=self.random_state,
                                                                shuffle=False,
-                                                               class_mode="other",
+                                                               class_mode="raw",
                                                                target_size=(self.model_img_width, self.model_img_height))
             data_len = len(data)
         elif self.model_type == 'multi':
@@ -574,88 +590,37 @@ class CNN_model:
         with open(os.path.join(self.output_pth, self.__append_prefix('train_hist.json')), 'w') as f:
             json.dump(H.history, f)
 
-    def preprocess_input(self, image, n_crops=9):
-        # """
+    def preprocess_input(self, image):
+        # print(image.dtype)
+        # print("Before: ", image.min(), image.max())
+        if self.brightness_range is not None:
+            factor = uniform(0, self.brightness_range)
+            factor = choice((-factor, factor))
+            image = image*(1+factor/100)
+
+        #     print("factor: ", factor)
         #
-        # :param image:
-        # :param n_crops: number of crops in the montage
-        # :return:
-        # """
-        # # If file is a crop, randomly shuffle
-        # if self.x_name == 'file':
-        #     # Get Crop
-        #     crop_idx = np.arange(n_crops)
-        #     rows = int(n_crops ** 0.5)
-        #     # Shuffle idx
-        #     np.random.shuffle(crop_idx)
-        #     new_crop_image = np.zeros(image.shape, dtype='uint8')
-        #     for i in range(rows):
-        #         for j in range(rows):
-        #             curr_idx = crop_idx[i * rows + j]
-        #             i_im = int((curr_idx) / rows)
-        #             j_im = (curr_idx) % rows
-        #             new_crop_image[i * 299:(i + 1) * 299, j * 299:(j + 1) * 299, :] = image[
-        #                                                                               i_im * 299:(i_im + 1) * 299,
-        #                                                                               j_im * 299:(j_im + 1) * 299,
-        #                                                                               :]
-        #     return new_crop_image
-        # # If file is a image, randomly montage
-        # elif self.x_name == 'original_fp':
-        #     img = row['original_fp']
-        #     # Read image
-        #     image = cv2.imread(img)
-        #     # Create flexible subdirectory path
-        #     f_list = img.split('/')
-        #     idx = f_list.index(data_folder)
-        #     f_list = f_list[idx - len(f_list) + 1:-1]
-        #     # Detect marker
-        #     corners = re.sub(' +', ' ',
-        #                      row['corners'].replace('\n', ' ').replace('[', ' ').replace(']', ' ')).strip().split(
-        #         ' ')
-        #     corners = np.array([(float(corners[0]), float(corners[1])),
-        #                         (float(corners[2]), float(corners[3])),
-        #                         (float(corners[4]), float(corners[5])),
-        #                         (float(corners[6]), float(corners[7]))])
-        #     if isinstance(corners, bool):
-        #         continue
-        #     else:
-        #         cont = False
-        #         for c in corners:
-        #             if c[0] > 5000 or c[1] > 5000 or c[0] < 0 or c[1] < 0:
-        #                 cont = True
-        #                 break
-        #         if cont:
-        #             continue
-        #
-        #     # Get len_per_pix
-        #     dist = []
-        #     for c in corners:
-        #         tmp_dist = []
-        #         for c_2 in corners:
-        #             tmp_dist.append(((c_2[0] - c[0]) ** 2 + (c_2[1] - c[1]) ** 2) ** 0.5)
-        #         tmp_dist = sorted(tmp_dist)[1:-1]
-        #         dist.extend(tmp_dist)
-        #     pix_per_len = np.average(dist) / marker_len
-        #     if pix_per_len < 10 or pix_per_len > 500:
-        #         # print(f"corners: {corners}")
-        #         print(f"Skipped, pix_per_len = {pix_per_len}")
-        #         continue
-        #     # Get Crop
-        #     new_crops = get_random_crops(image, crop_height, crop_width, corners, n_crops, m_images)
-        #     # Save crop and crop information
-        #     for c in range(len(new_crops)):
-        #         # Crop
-        #         new_cropped_fp = os.path.join(out_folder, 'cropped', '/'.join(f_list),
-        #                                       f"{img.split('.')[-2].split('/')[-1]}_crop_{c + len(new_crops)}.JPG")
-        #         cv2.imwrite(new_cropped_fp, new_crops[c])
-        #         # Crop information
-        #         df_crop['original_fp'].append(img)
-        #         df_crop['file'].append(new_cropped_fp)
-        #         df_crop['pix_per_len'].append(pix_per_len)
-        #         df_crop['units'].append(units)
-        #     return image
-        # else:
-        #     raise ValueError(f'{self.x_name} is not a valid column in the dataset.')
+        # print("After: ", image.min(), image.max())
+        if self.img_norm == '-1_to_+1':
+            image /= 127.5
+            image -= 1.
+        elif self.img_norm == '0_to_+1':
+            image /= 255.0
+        elif self.img_norm == 'mean_and_std':
+            if self.greyscale:
+                image -= self.img_mean_pt
+                image /= self.std_pt
+            else:
+                image[:, :, :, 0] -= self.img_mean_pt[0]
+                image[:, :, :, 1] -= self.img_mean_pt[1]
+                image[:, :, :, 2] -= self.img_mean_pt[2]
+                image[:, :, :, 0] /= self.img_std_pt[0]
+                image[:, :, :, 1] /= self.img_std_pt[1]
+                image[:, :, :, 2] /= self.img_std_pt[2]
+        elif self.img_norm is None:
+            return image
+        else:
+            print("Images are not manually normalized as it is the training process right now. Instead, it is done in the image data generator.")
         return image
 
 
@@ -664,6 +629,7 @@ def __load_and_run_model_and_save_results(cnn, train_data, test_data):
     # test_data = test_data[:100]
     # test_data = train_data.copy()
     # Get image norm parameters
+    copytree('../code', os.path.join(cnn.output_pth, 'code'))
     cnn.get_image_norm_parameters(train_data)
     # Save training parameters
     cnn.save_cnn_training_parameters()
@@ -675,13 +641,16 @@ def __load_and_run_model_and_save_results(cnn, train_data, test_data):
     clear_session()  # Clear GPU memory
     cnn.retrain = cnn.model_pth
     model = cnn.load_model(train_data)
-    # Generate test predictions
+    # TODO: Refactor code - put test output code into a function accepting the model and a dataset, and the function
+    #  outputs the previous plots and csv files (i.e. plot.jpg, test.csv, test_agg_mean.csv) Generate test predictions
     if cnn.model_type == 'multi':
         test_data, predictions = cnn.generate_predictions(model, test_data)
     else:
         predictions = cnn.generate_predictions(model, test_data)
+        # train_predictions=cnn.generate_predictions(model, train_data)
     # Output image results
     cnn.output_image_results(test_data, test_data['pix_per_len'].values, predictions)
+    # cnn.output_image_results(train_data,train_data['pix_per_len'].values, predictions)
     # Output DataFrame results
     test_data['predicted_pix_per_len'] = predictions
     cnn.save_dataframe_results(train_data, 'train.csv')
@@ -703,6 +672,7 @@ def __load_and_run_model_and_save_results(cnn, train_data, test_data):
     agg_test_data.reset_index(inplace=True)
     cnn.save_dataframe_results(agg_test_data, "test_agg_median.csv")
     cnn.plot_actual_to_predicted(agg_test_data, 'plot_agg_median.jpg')
+    # END TODO
     # Clear GPU memory
     clear_session()
 
@@ -738,7 +708,7 @@ def train_model(config, test_data_pth=None):
         __load_and_run_model_and_save_results(train_cnn, train_data, test_data)
 
 
-def test_model(config, mode=None, crop_length=550):
+def inference_model(config, mode=None, crop_length=850):
     """
     Assumes the folder location of the model contains the model tranining information.
     :param config: CNN configuration dictionary
@@ -785,7 +755,7 @@ def test_model(config, mode=None, crop_length=550):
         agg_test_data = data.groupby(["original_fp", 's_i']).mean()
         agg_test_data.reset_index(inplace=True)
         test_cnn.save_dataframe_results(agg_test_data, "test_agg_mean_test_zoom_implementation.csv")
-        test_cnn.plot_actual_to_predicted(agg_test_data, 'plot_agg_mean_zoom_implementation.jpg')
+        test_cnn.plot_actual_to_predicted(agg_test_data, 'plot_agg_mean_zoom_implementation.jpg', 's_i')
 
     test_cnn.save_dataframe_results(data, 'test.csv')
     # Save actual vs predicted plot
@@ -803,116 +773,296 @@ def test_model(config, mode=None, crop_length=550):
 
 if __name__ == '__main__':
     """
-    Training: parameters you want to specify are: epoches, output_pth, pth_to_labels, img_norm, lf_setting, learning_rate, image_augmentations
+    Training: parameters you want to specify are: epochs, output_pth, pth_to_labels, img_norm, lf_setting, learning_rate, image_augmentations
     Testing: parameters you want to specify are: output_pth, retrain, pth_to_labels
     """
-    # Montage Training - uwb
+    # Montage Training - uwb   case_2_3_train /home/jp/Desktop/juan/2020/LISE/datasets/PED_V2/case_2_3_train
     train = [
-        {
-          'output_pth': '../output/PED_testing_3',
-          'pth_to_labels': "../datasets/PED_V2/testing_3_train_set/crop_dataset_base_crop_length_550.csv",
-          'lf_setting': 'mape',
-            'learning_rate': 0.001,
-            'tmp': 'reg',
-            "test_dataset_path": "../datasets/PED_V2/testing_2_test_set/crop_dataset_base_crop_length_550.csv"
-        },
         # {
-        #   'output_pth': '../output/PED_testing_1_lower_lr',
-        #   'pth_to_labels': "../datasets/PED_V2/testing_1_train_set/crop_dataset_base_crop_length_550.csv",
-        #   'lf_setting': 'mape',
-        #     'learning_rate': 0.001,
+        #     'output_pth': '../output/case_2_100_EPOCHS_20%_brightness+20_channel+flips',
+        #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+        #     'dropout': False,
+        #     "image_augmentations": {
+        #         'channel_shift_range': 20,
+        #         'horizontal_flip': True,
+        #         'vertical_flip': True,
+        #     },
+        #     "brightness_range": 20,
         #     'tmp': 'reg',
-        #     "test_dataset_path": "../datasets/PED_V2/testing_1_test_set/crop_dataset_base_crop_length_550.csv"
+        #     'model_weights': None,
+        #     'greyscale': True,
+        #     "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
         # },
         # {
-        #     'output_pth': '../output/PED_testing_2_lower_lr',
-        #     'pth_to_labels': "../datasets/PED_V2/testing_2_train_set/crop_dataset_base_crop_length_550.csv",
-        #     'lf_setting': 'mape',
-        #     'learning_rate': 0.001,
+        #     'output_pth': '../output/case_2_100_EPOCHS_DROPOUT_20%_brightness+20_channel+flips',
+        #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+        #     'dropout': True,
+        #     "image_augmentations": {
+        #         'channel_shift_range': 20,
+        #         'horizontal_flip': True,
+        #         'vertical_flip': True,
+        #     },
+        #     "brightness_range": 20,
         #     'tmp': 'reg',
-        #     "test_dataset_path": "../datasets/PED_V2/testing_2_test_set/crop_dataset_base_crop_length_550.csv"
+        #     'model_weights': None,
+        #     'greyscale': True,
+        #     "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
+        # },
+        # {
+        #     'output_pth': '../output/case_3_100_EPOCHS_20%_brightness+20_channel+flips',
+        #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+        #     'dropout': False,
+        #     "image_augmentations": {
+        #         'channel_shift_range': 20,
+        #         'horizontal_flip': True,
+        #         'vertical_flip': True,
+        #     },
+        #     "brightness_range": 20,
+        #     'tmp': 'reg',
+        #     'model_weights': 'imagenet',
+        #     'greyscale': False,
+        #     "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
+        # },
+        # {
+        #     'output_pth': '../output/case_3_100_EPOCHS_DROPOUT_20%_brightness+20_channel+flips',
+        #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+        #     'dropout': True,
+        #     "image_augmentations": {
+        #         'channel_shift_range': 20,
+        #         'horizontal_flip': True,
+        #         'vertical_flip': True,
+        #     },
+        #     "brightness_range": 20,
+        #     'tmp': 'reg',
+        #     'model_weights': 'imagenet',
+        #     'greyscale': False,
+        #     "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
         # },
     ]
     train_config = {
-        "epochs": 150,
-        "output_pth": '',
-        "pth_to_labels": "",
+        "epochs": 100,
         'img_norm': '-1_to_+1',
         'norm_labels': False,
-        'greyscale': True,
+        'learning_rate': 1e-3,
         "lf_setting": 'mape',
-        'learning_rate': 0.0001,
-        "image_augmentations": {
-            "channel_shift_range": 50.0,
-            "brightness_range": [0.8, 1.2],
-            "horizontal_flip": True,
-            "vertical_flip": True,
-        },
         "model_type": 'single',
-        "model_weights": None  # or 'imagenet' for imagenet, greyscale needs to be set of False
     }
     for t in train:
+        train_config_tmp = train_config.copy()
         for key, value in t.items():
             if key != "test_dataset_path":
-                train_config[key] = value
+                train_config_tmp[key] = value
 
         if "test_dataset_path" in t.keys():
-            train_model(train_config, t["test_dataset_path"])  # Custom test data set
+            train_model(train_config_tmp, t["test_dataset_path"])  # Custom test data set
         else:
-            train_model(train_config)  # Create a test data set from training data
+            train_model(train_config_tmp)  # Create a test data set from training data
 
-    # Test DIFF and ZOOM on PED model
+    # Inference on DIFF and ZOOM on PED model
     # Montage Training - uwb
-    test = [
+    inference = [
+        {
+            "output_pth": '../output/best_check_case_2_100_EPOCHS_20_brightness+20_channel+flips_train',
+            "pth_to_labels": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
+            'retrain': '../output/20210220_012458_case_2_100_EPOCHS_20%_brightness+20_channel+flips/best_model.h5',
+            'greyscale': True,
+            'mode': 'zoom_implementation'
+        },
+
         # {
-        #     "output_pth": '../output/PED_testing_1_train',
-        #     "pth_to_labels": "../datasets/PED_V2/testing_1_train_set/crop_dataset_base_crop_length_550.csv",
-        #     'retrain': '../output/PED_testing_1/model.h5',
+        #     "output_pth": '../output/check_case_2_100_EPOCHS_20_brightness+20_channel+flips',
+        #     "pth_to_labels": "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+        #     'retrain': '../output/20210220_012458_case_2_100_EPOCHS_20%_brightness+20_channel+flips/model.h5',
+        #     'greyscale': True
         # },
         # {
-        #     "output_pth": '../output/PED_testing_2_train',
-        #     "pth_to_labels": "../datasets/PED_V2/testing_2_train_set/crop_dataset_base_crop_length_550.csv",
-        #     'retrain': '../output/PED_testing_1/model.h5',
+        #     "output_pth": '../output/99side_check_DIFF',
+        #     "pth_to_labels": "../datasets/DIFF/3_test_final/crop_dataset.csv",
+        #     'retrain': '../output/20210218_160259_case_1_10%_brightness+channel+flips/model.h5',
+        #     'greyscale': True
         # },
-        # {
-        #     "output_pth": '../output/PED_testing_1_zoom_implementation',
-        #     "pth_to_labels": "../datasets/PED_V2/testing_zoom_agg_implementation/crop_dataset_base_crop_length_550.csv",
-        #     'retrain': '../output/PED_testing_1/model.h5',
-        #     'mode': 'zoom_implementation'
-        # },
-        # {
-        #     "output_pth": '../output/PED_testing_2_zoom_implementation',
-        #     "pth_to_labels": "../datasets/PED_V2/testing_zoom_agg_implementation/crop_dataset_base_crop_length_550.csv",
-        #     'retrain': '../output/PED_testing_2/model.h5',
-        #     'mode': 'zoom_implementation'
-        # },
-        # {
-        #     "output_pth": '../output/PED_testing_1_zoom_implementation_color_imagenet',
-        #     "pth_to_labels": "../datasets/PED_V2/testing_zoom_agg_implementation/crop_dataset_base_crop_length_550.csv",
-        #     'retrain': '../output/PED_testing_1_color_imagenet/model.h5',
-        #     'mode': 'zoom_implementation'
-        # },
-        # {
-        #     "output_pth": '../output/PED_testing_2_zoom_implementation_color_imagenet',
-        #     "pth_to_labels": "../datasets/PED_V2/testing_zoom_agg_implementation/crop_dataset_base_crop_length_550.csv",
-        #     'retrain': '../output/PED_testing_2_color_imagenet/model.h5',
-        #     'mode': 'zoom_implementation'
-        # }
     ]
-    test_config = {
-        "output_pth": '',
-        "pth_to_labels": "",
-        'retrain': ''
+    inference_config = {
+        "output_pth": '',    # output folder name
+        "pth_to_labels": "",  # path to the dataset you want to run inference on
+        'retrain': ''   # path to the model that your want to use
     }
-    for t in test:
+    for t in inference:
         for key, value in t.items():
             if key != 'mode':
-                test_config[key] = t[key]
+                inference_config[key] = t[key]
         if 'mode' in  t.keys():
             if t['mode'] == 'zoom_implementation':
-                test_model(test_config, t['mode'])
+                inference_model(inference_config, t['mode'])
             else:
-                test_model(test_config)
+                inference_model(inference_config)
         else:
-            test_model(test_config)
+            inference_model(inference_config)
 
+   # train = [
+        # {
+        #     'output_pth': '../output/case_2_100_EPOCHS_20%_brightness+20_channel+flips',
+        #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+        #     'dropout': False,
+        #     "image_augmentations": {
+        #         'channel_shift_range': 20,
+        #         'horizontal_flip': True,
+        #         'vertical_flip': True,
+        #     },
+        #     "brightness_range": 20,
+        #     'tmp': 'reg',
+        #     'model_weights': None,
+        #     'greyscale': True,
+        #     "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
+        # },
+        # {
+        #     'output_pth': '../output/case_2_100_EPOCHS_DROPOUT_20%_brightness+20_channel+flips',
+        #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+        #     'dropout': True,
+        #     "image_augmentations": {
+        #         'channel_shift_range': 20,
+        #         'horizontal_flip': True,
+        #         'vertical_flip': True,
+        #     },
+        #     "brightness_range": 20,
+        #     'tmp': 'reg',
+        #     'model_weights': None,
+        #     'greyscale': True,
+        #     "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
+        # },
+        # {
+        #     'output_pth': '../output/case_3_100_EPOCHS_20%_brightness+20_channel+flips',
+        #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+        #     'dropout': False,
+        #     "image_augmentations": {
+        #         'channel_shift_range': 20,
+        #         'horizontal_flip': True,
+        #         'vertical_flip': True,
+        #     },
+        #     "brightness_range": 20,
+        #     'tmp': 'reg',
+        #     'model_weights': 'imagenet',
+        #     'greyscale': False,
+        #     "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
+        # },
+        # {
+        #     'output_pth': '../output/case_3_100_EPOCHS_DROPOUT_20%_brightness+20_channel+flips',
+        #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+        #     'dropout': True,
+        #     "image_augmentations": {
+        #         'channel_shift_range': 20,
+        #         'horizontal_flip': True,
+        #         'vertical_flip': True,
+        #     },
+        #     "brightness_range": 20,
+        #     'tmp': 'reg',
+        #     'model_weights': 'imagenet',
+        #     'greyscale': False,
+        #     "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
+        # },
+        # {
+        #     'output_pth': '../output/case_1_no_aug',
+        #     'pth_to_labels': "../datasets/PED_V2/3_train_850_final/crop_dataset.csv",
+        #     'dropout': False,
+        #     'tmp': 'reg',
+        #     'model_weights': None,
+        #     'greyscale': True,
+        #     "test_dataset_path": "../datasets/PED_V2/3_test_850_final/crop_dataset.csv",
+        #     "brightness_range": None
+        # },
+        # {
+        #     'output_pth': '../output/case_3_10%_brightness',
+        #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+        #     'dropout': False,
+        #     "image_augmentations": {},
+        #     "brightness_range": 10,
+        #     'tmp': 'reg',
+        #     'model_weights': 'imagenet',
+        #     'greyscale': False,
+        #     "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
+        # },
+        # {
+        #     'output_pth': '../output/case_1_10%_brightness+channel',
+        #     'pth_to_labels': "../datasets/PED_V2/3_train_850_final/crop_dataset.csv",
+        #     'dropout': False,
+        #     "image_augmentations": {
+        #         'channel_shift_range': 10,
+        #     },
+        #     "brightness_range": 10,
+        #     'tmp': 'reg',
+        #     'model_weights': None,
+        #     'greyscale': True,
+        #     "test_dataset_path": "../datasets/PED_V2/3_test_850_final/crop_dataset.csv",
+        # },
+        # {
+        #     'output_pth': '../output/case_2_10%_brightness+channel',
+        #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+        #     'dropout': False,
+        #     "image_augmentations": {
+        #         'channel_shift_range': 10,
+        #     },
+        #     "brightness_range": 10,
+        #     'tmp': 'reg',
+        #     'model_weights': None,
+        #     'greyscale': True,
+        #     "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
+        # },
+        # {
+        #     'output_pth': '../output/case_3_10%_brightness+channel',
+        #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+        #     'dropout': False,
+        #     "image_augmentations": {
+        #         'channel_shift_range': 10,
+        #     },
+        #     "brightness_range": 10,
+        #     'tmp': 'reg',
+        #     'model_weights': 'imagenet',
+        #     'greyscale': False,
+        #     "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
+        # },
+        # {
+        #     'output_pth': '../output/case_1_10%_brightness+channel+flips',
+        #     'pth_to_labels': "../datasets/PED_V2/3_train_850_final/crop_dataset.csv",
+        #     'dropout': False,
+        #     "image_augmentations": {
+        #         'channel_shift_range': 10,
+        #         'horizontal_flip': True,
+        #         'vertical_flip': True,
+        #     },
+        #     "brightness_range": 10,
+        #     'tmp': 'reg',
+        #     'model_weights': None,
+        #     'greyscale': True,
+        #     "test_dataset_path": "../datasets/PED_V2/3_test_850_final/crop_dataset.csv",
+        # },
+        # {
+        #     'output_pth': '../output/case_2_10%_brightness+channel+flips',
+        #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+        #     'dropout': False,
+        #     "image_augmentations": {
+        #         'channel_shift_range': 10,
+        #         'horizontal_flip': True,
+        #         'vertical_flip': True,
+        #     },
+        #     "brightness_range": 10,
+        #     'tmp': 'reg',
+        #     'model_weights': None,
+        #     'greyscale': True,
+        #     "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
+        # },
+        # {
+        #     'output_pth': '../output/case_3_10%_brightness+channel+flips',
+        #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+        #     'dropout': False,
+        #     "image_augmentations": {
+        #         'channel_shift_range': 10,
+        #         'horizontal_flip': True,
+        #         'vertical_flip': True,
+        #     },
+        #     "brightness_range": 10,
+        #     'tmp': 'reg',
+        #     'model_weights': 'imagenet',
+        #     'greyscale': False,
+        #     "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
+        # },
+    # ]
