@@ -647,31 +647,50 @@ def __load_and_run_model_and_save_results(cnn, train_data, test_data):
         test_data, predictions = cnn.generate_predictions(model, test_data)
     else:
         predictions = cnn.generate_predictions(model, test_data)
-        # train_predictions=cnn.generate_predictions(model, train_data)
+        train_predictions=cnn.generate_predictions(model, train_data)
     # Output image results
     cnn.output_image_results(test_data, test_data['pix_per_len'].values, predictions)
     # cnn.output_image_results(train_data,train_data['pix_per_len'].values, predictions)
     # Output DataFrame results
+    train_data['predicted_pix_per_len'] = train_predictions
     test_data['predicted_pix_per_len'] = predictions
     cnn.save_dataframe_results(train_data, 'train.csv')
+
     cnn.save_dataframe_results(test_data, 'test.csv')
+
     # Generate and save plots
     cnn.plot_history(H.history['loss'], H.history['val_loss'], 'model loss', 'epoch', 'loss', ['train', 'test'],
                            'loss.jpg')
     # Save Training History
     cnn.pkl_training_history(H)
     # Save actual vs predicted plot
-    cnn.plot_actual_to_predicted(test_data, 'plot.jpg')
+    cnn.plot_actual_to_predicted(test_data, 'test_data_plot.jpg')
+
+    cnn.plot_actual_to_predicted(train_data, 'train_data_plot.jpg')
+
     # Aggregate and plot results
+
     agg_test_data = test_data.groupby(["original_fp", 'pix_per_len']).mean()
     agg_test_data.reset_index(inplace=True)
     cnn.save_dataframe_results(agg_test_data, "test_agg_mean.csv")
     cnn.plot_actual_to_predicted(agg_test_data, 'plot_agg_mean.jpg')
+
+    agg_train_data = train_data.groupby(["original_fp", 'pix_per_len']).mean()
+    agg_train_data.reset_index(inplace=True)
+    cnn.save_dataframe_results(agg_train_data, "train_agg_mean.csv")
+    cnn.plot_actual_to_predicted(agg_train_data, 'train_plot_agg_mean.jpg')
+
     # Aggregate and plot results
+
     agg_test_data = test_data.groupby(["original_fp", 'pix_per_len']).median()
     agg_test_data.reset_index(inplace=True)
     cnn.save_dataframe_results(agg_test_data, "test_agg_median.csv")
     cnn.plot_actual_to_predicted(agg_test_data, 'plot_agg_median.jpg')
+
+    agg_train_data = train_data.groupby(["original_fp", 'pix_per_len']).median()
+    agg_train_data.reset_index(inplace=True)
+    cnn.save_dataframe_results(agg_train_data, "train_agg_median.csv")
+    cnn.plot_actual_to_predicted(agg_train_data, 'train_plot_agg_median.jpg')
     # END TODO
     # Clear GPU memory
     clear_session()
@@ -778,21 +797,22 @@ if __name__ == '__main__':
     """
     # Montage Training - uwb   case_2_3_train /home/jp/Desktop/juan/2020/LISE/datasets/PED_V2/case_2_3_train
     train = [
-        # {
-        #     'output_pth': '../output/case_2_100_EPOCHS_20%_brightness+20_channel+flips',
-        #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
-        #     'dropout': False,
-        #     "image_augmentations": {
-        #         'channel_shift_range': 20,
-        #         'horizontal_flip': True,
-        #         'vertical_flip': True,
-        #     },
-        #     "brightness_range": 20,
-        #     'tmp': 'reg',
-        #     'model_weights': None,
-        #     'greyscale': True,
-        #     "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
-        # },
+        {
+            'output_pth': '../output/case_2_100E_REFACTOR_TEST_20%_brightness+20_channel+flips',
+            'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
+            "epochs": 100,
+            'dropout': False,
+            "image_augmentations": {
+                'channel_shift_range': 20,
+                'horizontal_flip': True,
+                'vertical_flip': True,
+            },
+            "brightness_range": 20,
+            'tmp': 'reg',
+            'model_weights': None,
+            'greyscale': True,
+            "test_dataset_path": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
+        },
         # {
         #     'output_pth': '../output/case_2_100_EPOCHS_DROPOUT_20%_brightness+20_channel+flips',
         #     'pth_to_labels': "../datasets/PED_V2/case_2_3_train/crop_dataset_base_crop_length_850.csv",
@@ -861,13 +881,13 @@ if __name__ == '__main__':
     # Inference on DIFF and ZOOM on PED model
     # Montage Training - uwb
     inference = [
-        {
-            "output_pth": '../output/best_check_case_2_100_EPOCHS_20_brightness+20_channel+flips_train',
-            "pth_to_labels": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
-            'retrain': '../output/20210220_012458_case_2_100_EPOCHS_20%_brightness+20_channel+flips/best_model.h5',
-            'greyscale': True,
-            'mode': 'zoom_implementation'
-        },
+        # {
+        #     "output_pth": '../output/best_check_case_2_100_EPOCHS_20_brightness+20_channel+flips_train',
+        #     "pth_to_labels": "../datasets/PED_V2/case_2_3_test/crop_dataset_base_crop_length_850.csv",
+        #     'retrain': '../output/20210220_012458_case_2_100_EPOCHS_20%_brightness+20_channel+flips/best_model.h5',
+        #     'greyscale': True,
+        #     'mode': 'zoom_implementation'
+        # },
 
         # {
         #     "output_pth": '../output/check_case_2_100_EPOCHS_20_brightness+20_channel+flips',
