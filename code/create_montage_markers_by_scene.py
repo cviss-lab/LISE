@@ -355,10 +355,10 @@ def get_crop(img, cnt, width=299, height=299):
                         [width-1, height-1]], dtype="float32")
 
     # the perspective transformation matrix
-    M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+    H = cv2.getPerspectiveTransform(src_pts, dst_pts)
 
     # directly warp the rotated rectangle to get the straightened rectangle
-    return cv2.warpPerspective(img, M, (width, height))
+    return cv2.warpPerspective(img, H, (width, height))
 
 
 def RotM(alpha):

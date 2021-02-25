@@ -73,24 +73,25 @@ H = np.matmul(P2, np.linalg.pinv(P1))
 
 n = 300  # size of patch
 
-bbox = np.array(([0, 0],
-                 [n, 0],
-                 [n, n],
-                 [0, n]))
+# bbox = np.array(([0, 0],
+#                  [n, 0],
+#                  [n, n],
+#                  [0, n]))
+#
+# poly_pt = np.matmul(np.linalg.inv(H), np.concatenate((bbox, np.ones((4, 1))), axis=1).T)
 
-poly_pt = np.matmul(np.linalg.inv(H), np.concatenate((bbox, np.ones((4, 1))), axis=1).T)
 
-dst = cv2.warpPerspective(img, H, (3000 ,3000))
-# plt.imshow(dst)0
-# plt.title('Output')
-plt.subplot(121),plt.imshow(img),plt.title('Input')
-plt.subplot(122),plt.imshow(dst),plt.title('Output')
+h, w = img.shape[:2]
+pts = np.float32([[0, 0], [0, h2], [w2, h2], [w2, 0]]).reshape(-1, 1, 2)
+pts_ = cv2.perspectiveTransform(pts2, H)
+
+[xmin, ymin] = np.int32(pts_.min(axis=0).ravel() - 0.5)
+[xmax, ymax] = np.int32(pts_.max(axis=0).ravel() + 0.5)
+t = [-xmin, -ymin]
+Ht = np.array([[1, 0, t[0]], [0, 1, t[1]], [0, 0, 1]])  # translate
+
+dst = cv2.warpPerspective(img, Ht.dot(H), (xmax - xmin, ymax - ymin))
+
+plt.subplot(121), plt.imshow(img), plt.title('Input')
+plt.subplot(122), plt.imshow(dst), plt.title('Output')
 plt.show()
-# # Visualizing the F matrix using homography rectification
-#     if not args.no_vis:
-#         H, _ = cv2.findHomography(matched_points_a, matched_points_b)
-#         pic_a = cv2.warpPerspective(pic_a, H, (pic_b.shape[1], pic_b.shape[0]))
-#         transformed_points_a = cv2.perspectiveTransform(
-#             matched_points_a.reshape(-1, 1, 2), H).squeeze(axis=1)
-#         showCorrespondence(pic_a, pic_b, transformed_points_a, matched_points_b)
-#         draw_epipolar_lines(F_matrix, pic_a, pic_b, transformed_points_a, matched_points_b)
