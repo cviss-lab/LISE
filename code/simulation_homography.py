@@ -18,11 +18,11 @@ T1 = np.array(([0], [0], [1]));
 theta = 25
 
 th_deg = random.uniform(-theta, theta);
-th_deg = 23.2444;
+
 
 th = np.deg2rad(th_deg)
 phi_deg = random.uniform(360);
-phi_deg = 56.7407
+
 phi = np.deg2rad(phi_deg)
 
 a = np.array(([0], [0], [1]));
@@ -82,8 +82,8 @@ n = 300  # size of patch
 
 
 h, w = img.shape[:2]
-pts = np.float32([[0, 0], [0, h2], [w2, h2], [w2, 0]]).reshape(-1, 1, 2)
-pts_ = cv2.perspectiveTransform(pts2, H)
+pts = np.float32([[0, 0], [0, h], [w, h], [w, 0]]).reshape(-1, 1, 2)
+pts_ = cv2.perspectiveTransform(pts, H)
 
 [xmin, ymin] = np.int32(pts_.min(axis=0).ravel() - 0.5)
 [xmax, ymax] = np.int32(pts_.max(axis=0).ravel() + 0.5)

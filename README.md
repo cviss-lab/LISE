@@ -10,9 +10,11 @@
 
 ### Introduction
 
-This repository contains the source code used by the authors for training and validating the LISE network developed for the [paper](https://onlinelibrary.wiley.com/doi/abs/10.1111/mice.12613),
+This repository contains the source code used by the authors for training and validating the LISE network developed for the [paper](https://onlinelibrary.wiley.com/doi/abs/10.1111/mice.12613) and [thesis](http://hdl.handle.net/10012/16828),
 
-Park, JA, Yeum, CM, Hrynyk, TD. Learning‐based image scale estimation using surface textures for quantitative visual inspection of regions‐of‐interest. *Comput Aided Civ Inf*. 2021; 36: 227– 241.
+**Paper:** Park, JA, Yeum, CM, Hrynyk, TD. Learning‐based image scale estimation using surface textures for quantitative visual inspection of regions‐of‐interest. *Comput Aided Civ Inf*. 2021; 36: 227– 241.
+
+**Thesis:** Ju An Park       (2021).       Learning-based Image Scale Estimation for Quantitative Visual Inspection of Civil  Structures. UWSpace.       http://hdl.handle.net/10012/16828.
 
 LISE is a CNN regression model trained to predict image scale using texture patches. Once estimated, the image scales can be used to quantify features on images (example image shown below).
 

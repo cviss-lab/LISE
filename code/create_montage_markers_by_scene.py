@@ -135,7 +135,7 @@ def detect_marker(image, img, aruco_dict, parameters, skip_manual_marker_selecti
     return corners
 
 
-def manually_select_marker(image):
+def cmanually_select_marker(image):
     """
     https://www.pyimagesearch.com/2015/03/09/capturing-mouse-click-events-with-python-and-opencv/
     Get user to automatically select 4 points
@@ -330,6 +330,7 @@ def crop_around_center(image, rotated_restricted_area, width, height):
 
 
 def get_crop(img, cnt, width=299, height=299):
+    # TODO: See img file sent by Juan, 25/26-02-2021 STEP 4
     # print("shape of cnt: {}".format(cnt.shape))
     rect = cv2.minAreaRect(cnt)
     # print("rect: {}".format(rect))
@@ -726,7 +727,7 @@ def create_n_by_n_markers(crop_width=299,
 
 def create_zoom_dataset(crop_length=550,
                         m_patches=10,
-                        marker_len=10.0,  # 10
+                        marker_len=9.4,  # 10
                         units='cm',
                         mode='training_and_validation',
                         overall_folder='datasets/9_all_data_compiled/',
@@ -902,21 +903,39 @@ if __name__ == '__main__':
 
     # training image dataset
 
-    create_zoom_dataset(overall_folder='../datasets/PED_V2/',  # folder that contains raw data
-                        out_folder='../datasets/PED_V2/case_2_3_train',
-                        # contains cropped dataset
-                        img_or_crop_df_pth='../datasets/PED_V2/2_processed/train_img_dataset.csv',
-                        img_sampling_type='uniform',
-                        m_patches=1, patches_per_bin=900, crop_length=850,
-                        )
 
-    # test image dataset
-    create_zoom_dataset(overall_folder='../datasets/PED_V2/',  # folder that contains raw data
-                        out_folder='../datasets/PED_V2/case_2_3_test',  # contains cropped dataset
-                        img_or_crop_df_pth='../datasets/PED_V2/2_processed/test_img_dataset.csv',
+    create_zoom_dataset(overall_folder='../datasets/homography_test/',  # folder that contains raw data
+                        out_folder='../datasets/homography_test/case_2_3_train',
+                        # contains cropped dataset
+                        img_or_crop_df_pth=None,
                         img_sampling_type='uniform',
-                        m_patches=1, patches_per_bin=300, crop_length=850,
+                        skip_manual_marker_selection=False,
+                        n_bins=1,
+                        m_patches=1, patches_per_bin=10, crop_length=850,
                         )
+    # create_n_by_n_markers(n_crops=2,
+    #                       m_patches=5,
+    #                       overall_folder='../datasets/homography_test/',
+    #                       out_folder='../datasets/homography_test/trial',
+    #                       crop_height=100,
+    #                       crop_width=100,
+    #                       marker_len=9.4)
+
+    # create_zoom_dataset(overall_folder='../datasets/PED_V2/',  # folder that contains raw data
+    #                     out_folder='../datasets/PED_V2/case_2_3_train',
+    #                     # contains cropped dataset
+    #                     img_or_crop_df_pth='../datasets/PED_V2/2_processed/train_img_dataset.csv',
+    #                     img_sampling_type='uniform',
+    #                     m_patches=1, patches_per_bin=900, crop_length=850,
+    #                     )
+    #
+    # # test image dataset
+    # create_zoom_dataset(overall_folder='../datasets/PED_V2/',  # folder that contains raw data
+    #                     out_folder='../datasets/PED_V2/case_2_3_test',  # contains cropped dataset
+    #                     img_or_crop_df_pth='../datasets/PED_V2/2_processed/test_img_dataset.csv',
+    #                     img_sampling_type='uniform',
+    #                     m_patches=1, patches_per_bin=300, crop_length=850,
+    #                     )
 
     # To run the detection and output the dataframe containing corners of detected markers, run this code:
     # Test zoom aggreagation implementation
