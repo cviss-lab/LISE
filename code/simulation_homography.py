@@ -71,7 +71,7 @@ P2 = np.matmul(K, np.concatenate((R2, np.matmul(-R2, T2)), axis=1))
 
 H = np.matmul(P2, np.linalg.pinv(P1))
 
-n = 300  # size of patch
+# n = 300  # size of patch
 
 # bbox = np.array(([0, 0],
 #                  [n, 0],
@@ -82,16 +82,22 @@ n = 300  # size of patch
 
 
 h, w = img.shape[:2]
-pts = np.float32([[0, 0], [0, h], [w, h], [w, 0]]).reshape(-1, 1, 2)
-pts_ = cv2.perspectiveTransform(pts, H)
+pts = np.float32([[0, 0], [0, h-1], [w-1, h-1], [w-1, 0]]).reshape(-1, 1, 2)
+pts_distort = cv2.perspectiveTransform(pts, H)
 
-[xmin, ymin] = np.int32(pts_.min(axis=0).ravel() - 0.5)
-[xmax, ymax] = np.int32(pts_.max(axis=0).ravel() + 0.5)
+[xmin, ymin] = np.int32(pts_distort.min(axis=0).ravel() - 0.5)
+[xmax, ymax] = np.int32(pts_distort.max(axis=0).ravel() + 0.5)
 t = [-xmin, -ymin]
 Ht = np.array([[1, 0, t[0]], [0, 1, t[1]], [0, 0, 1]])  # translate
 
 dst = cv2.warpPerspective(img, Ht.dot(H), (xmax - xmin, ymax - ymin))
 
-plt.subplot(121), plt.imshow(img), plt.title('Input')
-plt.subplot(122), plt.imshow(dst), plt.title('Output')
+pts_stack=np.concatenate(pts, axis=0)
+pts_distort_stack=np.concatenate(pts_distort, axis=0)   # feed it in get_crop
+
+# reverse= cv2.warpPerspective(img, np.linalg.inv(Ht).dot(np.linalg.inv(H)), (xmax - xmin, ymax - ymin))
+plt.subplot(131), plt.imshow(img), plt.title('Input')
+plt.subplot(132), plt.imshow(dst), plt.title('Output')
+# plt.subplot(133), plt.imshow(reverse), plt.title('Reverse')
 plt.show()
+

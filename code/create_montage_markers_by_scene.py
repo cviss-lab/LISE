@@ -8,6 +8,13 @@ from sklearn.metrics import mean_absolute_error
 from glob import glob
 from shapely.geometry import Polygon
 from PIL import Image
+import numpy as np
+from numpy import random
+import matplotlib.pyplot as plt
+from skimage.io import imread
+from mpl_toolkits.mplot3d import Axes3D  # <--- This is important for 3d plotting
+import cv2
+
 
 def copytree(src, dst, symlinks=False, ignore=None):
     for item in os.listdir(src):
@@ -18,13 +25,14 @@ def copytree(src, dst, symlinks=False, ignore=None):
         else:
             shutil.copy2(s, d)
 
-def create_empty_df_dict(type='img'):
-    if type=='img':
-        return {"original_fp": [], 'corners': [], "pix_per_len": [], 'units': []}
+
+def create_empty_df_dict(type='img', theta=None):
+    if type == 'img':
+        df = {"original_fp": [], 'corners': [], "pix_per_len": [], 'units': []}
     elif type == 'crop':
-        return {"original_fp": [], 'file': [], "pix_per_len": [], 'units': [], 'marker_corners':[]}
+        df = {"original_fp": [], 'file': [], "pix_per_len": [], 'units': [], 'marker_corners': []}
     elif type == 'crop_zoom':
-        return {
+        df = {
             'original_fp': [],
             's_i': [],
             'file': [],
@@ -36,6 +44,13 @@ def create_empty_df_dict(type='img'):
         }
     else:
         raise ValueError(f"Type {type} is not implemented.")
+
+    if theta is not None:
+        df['H'] = []
+        df['th_deg'] = []
+        df['phi_deg'] = []
+
+    return df
 
 
 def get_intermittent_file_path(original_fp, data_folder):
@@ -120,6 +135,7 @@ def detect_marker(image, img, aruco_dict, parameters, skip_manual_marker_selecti
         else:
             # Manually find marker
             corners = manually_select_marker(image)
+            found_marker = True
         # corners = False
     elif len(corners) > 1:
         print("Found more than 1 markers in file: {}".format(img))
@@ -129,13 +145,14 @@ def detect_marker(image, img, aruco_dict, parameters, skip_manual_marker_selecti
         else:
             # Manually find marker
             corners = manually_select_marker(image)
+            found_marker = True
         # corners = False
     else:
         corners = corners[0][0]
-    return corners
+    return corners, found_marker
 
 
-def cmanually_select_marker(image):
+def manually_select_marker(image):
     """
     https://www.pyimagesearch.com/2015/03/09/capturing-mouse-click-events-with-python-and-opencv/
     Get user to automatically select 4 points
@@ -210,21 +227,28 @@ def rotate_image(image, restricted_area, angle):
         [cv2.getRotationMatrix2D(image_center, angle, 1.0), [0, 0, 1]]
     )
 
-    rot_mat_notranslate = np.matrix(rot_mat[0:2, 0:2])
+    # rot_mat_notranslate = np.matrix(rot_mat[0:2, 0:2])
+    rot_mat_notranslate = np.array(rot_mat[0:2, 0:2])
 
     # Shorthand for below calcs
     image_w2 = image_size[0] * 0.5
     image_h2 = image_size[1] * 0.5
 
     # Obtain the rotated coordinates of the image corners
+    # rotated_coords = [
+    #     (np.array([-image_w2,  image_h2]) * rot_mat_notranslate).A[0],
+    #     (np.array([ image_w2,  image_h2]) * rot_mat_notranslate).A[0],
+    #     (np.array([-image_w2, -image_h2]) * rot_mat_notranslate).A[0],
+    #     (np.array([ image_w2, -image_h2]) * rot_mat_notranslate).A[0]
+    # ]
     rotated_coords = [
-        (np.array([-image_w2,  image_h2]) * rot_mat_notranslate).A[0],
-        (np.array([ image_w2,  image_h2]) * rot_mat_notranslate).A[0],
-        (np.array([-image_w2, -image_h2]) * rot_mat_notranslate).A[0],
-        (np.array([ image_w2, -image_h2]) * rot_mat_notranslate).A[0]
+        (np.array([-image_w2, image_h2]) * rot_mat_notranslate),
+        (np.array([image_w2, image_h2]) * rot_mat_notranslate),
+        (np.array([-image_w2, -image_h2]) * rot_mat_notranslate),
+        (np.array([image_w2, -image_h2]) * rot_mat_notranslate)
     ]
-
     # Find the size of the new image
+    rotated_coords = np.sum(np.array(rotated_coords), axis=1)
     x_coords = [pt[0] for pt in rotated_coords]
     x_pos = [x for x in x_coords if x > 0]
     x_neg = [x for x in x_coords if x < 0]
@@ -241,22 +265,32 @@ def rotate_image(image, restricted_area, angle):
     new_w = int(abs(right_bound - left_bound))
     new_h = int(abs(top_bound - bot_bound))
 
-    # We require a translation matrix to keep the image centred
-    trans_mat = np.matrix([
+    # # We require a translation matrix to keep the image centred
+    # trans_mat = np.matrix([
+    #     [1, 0, int(new_w * 0.5 - image_w2)],
+    #     [0, 1, int(new_h * 0.5 - image_h2)],
+    #     [0, 0, 1]
+    # ])
+    trans_mat = np.array([
         [1, 0, int(new_w * 0.5 - image_w2)],
         [0, 1, int(new_h * 0.5 - image_h2)],
         [0, 0, 1]
     ])
-
     # Compute the tranform for the combined rotation and translation
-    affine_mat = (np.matrix(trans_mat) * np.matrix(rot_mat))[0:2, :]
-
+    # affine_mat = (np.matrix(trans_mat) * np.matrix(rot_mat))[0:2, :]
+    affine_mat = (np.array(trans_mat) * np.array(rot_mat))[0:2, :]
     # Obtain the rotated coordinates of the restricted corners
+    # restricted_area = np.array([
+    #     np.dot(affine_mat, np.append(restricted_area[0, :], 1)).A[0],
+    #     np.dot(affine_mat, np.append(restricted_area[1, :], 1)).A[0],
+    #     np.dot(affine_mat, np.append(restricted_area[2, :], 1)).A[0],
+    #     np.dot(affine_mat, np.append(restricted_area[3, :], 1)).A[0]
+    # ])
     restricted_area = np.array([
-        np.dot(affine_mat, np.append(restricted_area[0, :], 1)).A[0],
-        np.dot(affine_mat, np.append(restricted_area[1, :], 1)).A[0],
-        np.dot(affine_mat, np.append(restricted_area[2, :], 1)).A[0],
-        np.dot(affine_mat, np.append(restricted_area[3, :], 1)).A[0]
+        np.dot(np.array(affine_mat), np.append(restricted_area[0, :], 1)),
+        np.dot(np.array(affine_mat), np.append(restricted_area[1, :], 1)),
+        np.dot(np.array(affine_mat), np.append(restricted_area[2, :], 1)),
+        np.dot(np.array(affine_mat), np.append(restricted_area[3, :], 1))
     ])
 
     # Apply the transform
@@ -329,10 +363,11 @@ def crop_around_center(image, rotated_restricted_area, width, height):
     return image[y1:y2, x1:x2], cropped_and_rotated_restricted_area
 
 
-def get_crop(img, cnt, width=299, height=299):
+def get_crop(img, patch_coordinates, width=299, height=299):
     # TODO: See img file sent by Juan, 25/26-02-2021 STEP 4
-    # print("shape of cnt: {}".format(cnt.shape))
-    rect = cv2.minAreaRect(cnt)
+    # print("shape of patch_coordinates: {}".format(patch_coordinates.shape))
+
+    rect = cv2.minAreaRect(patch_coordinates)
     # print("rect: {}".format(rect))
 
     # the order of the box points: bottom left, top left, top right,
@@ -343,20 +378,21 @@ def get_crop(img, cnt, width=299, height=299):
     # print("bounding box: {}".format(box))
     # cv2.drawContours(img, [box], 0, (0, 0, 255), 2)
 
-    # get width and height of the detected rectangle
-    if abs(int(rect[1][0])-width) > 10 or abs(int(rect[1][1])-height) > 10:
-        raise ValueError("Your crop image size and desired image size are very different.")
+    # # get width and height of the detected rectangle
+    # if abs(int(rect[1][0]) - width) > 10 or abs(int(rect[1][1]) - height) > 10:
+    #     raise ValueError("Your crop image size and desired image size are very different.")
 
     src_pts = box.astype("float32")
     # corrdinate of the points in box points after the rectangle has been
     # straightened
-    dst_pts = np.array([[0, height-1],
+    dst_pts = np.array([[0, height - 1],
                         [0, 0],
-                        [width-1, 0],
-                        [width-1, height-1]], dtype="float32")
+                        [width - 1, 0],
+                        [width - 1, height - 1]], dtype="float32")
 
     # the perspective transformation matrix
-    H = cv2.getPerspectiveTransform(src_pts, dst_pts)
+    # H = cv2.getPerspectiveTransform(src_pts, dst_pts)
+    H = cv2.getPerspectiveTransform(patch_coordinates[:,0,:], dst_pts)
 
     # directly warp the rotated rectangle to get the straightened rectangle
     return cv2.warpPerspective(img, H, (width, height))
@@ -366,7 +402,7 @@ def RotM(alpha):
     """ Rotation Matrix for angle ``alpha`` """
     sa, ca = np.sin(alpha), np.cos(alpha)
     return np.array([[ca, -sa],
-                     [sa,  ca]])
+                     [sa, ca]])
 
 
 def getRandomSquareVertices(center, point_0, phi):
@@ -379,7 +415,8 @@ def getRandomSquareVertices(center, point_0, phi):
     return np.array(vv).astype(np.float32)
 
 
-def get_random_crops(image, crop_height, crop_width, restricted_area, n_crops=4, max_angle=360, seed=None, width=299, height=299, n_channels=1, m_patches=10, margin=75):
+def get_random_crops(image, crop_height, crop_width, restricted_area, n_crops=4, max_angle=360, seed=None, width=299,
+                     height=299, n_channels=1, m_patches=10, margin=75):
     """
     Randomly rotate and retrieve crops from image to generate montages
     :param image: numpy array, contains the pixel value of images
@@ -417,49 +454,137 @@ def montage_crops(n_crops, crop_width, crop_height, n_channels, crops):
                         i * rows + j]
     return tmp_image
 
-def attempt_find_valid_crops(restricted_area, margin, m_patches, n, original_fp, attempts):
-    crop_corners = []
+def attempt_find_valid_crops(restricted_area, margin, m_patches, n, original_fp, attempts, theta=None, phi=0):
+    crop_corner_arr = []
     img = Image.open(original_fp)  # Loads image without actually loading image.
     width, height = img.size
+    original_img_polygon = Polygon([[0, 0],
+                               [width - 1, 0],
+                               [width - 1, height - 1],
+                               [0, height - 1]])
+    original_marker_polygon = Polygon(restricted_area)
+    if theta is None:
+        img_polygon = Polygon([[0, 0],
+                               [width - 1, 0],
+                               [width - 1, height - 1],
+                               [0, height - 1]])
+        # Create polygon to check if randomly generated points are inside polygon
+        marker_polygon = Polygon(restricted_area)
+    else:
+        H, original_img_corners, distorted_img_corners, th_deg, phi_deg = distort_img(img, theta, phi)
+        img_polygon = Polygon(distorted_img_corners)
+        distorted_restricted_area = cv2.perspectiveTransform(np.expand_dims(restricted_area.astype(np.float32), 1), H)
+        marker_polygon = Polygon(distorted_restricted_area[:, 0, :])
 
-    # Create polygon to check if randomly generated points are inside polygon
-    marker_polygon = Polygon(restricted_area)
     # Added margin to avoid whitespace on marker
-    marker_polygon = marker_polygon.buffer(margin)
+    original_marker_polygon = original_marker_polygon.buffer(margin)
     is_there_valid_regions = False
+    min_x, min_y, max_x, max_y = img_polygon.bounds
+
+    # Get patch coordinates
     for m in range(m_patches):
         # Generate crops
         num_attempts = 1
         while num_attempts <= attempts or is_there_valid_regions:
-            forbid_border = math.ceil((n ** 2 + n ** 2) ** (1 / 2)) / 2
-            max_x = width - forbid_border
-            max_y = height - forbid_border  # TODO: check if height and width need to be flipped
-            if max_x < forbid_border or max_y < forbid_border:
-                num_attempts += 1
-                continue
-            x = np.random.randint(forbid_border, max_x)
-            y = np.random.randint(forbid_border, max_y)
+            x = np.random.randint(min_x, max_x)
+            y = np.random.randint(min_y, max_y)
             rotation_angle = random.random() * np.pi
 
-            crop_vertices = getRandomSquareVertices((x, y), (n / 2, n / 2), rotation_angle)
-            tmp_crop_corners = [(crop_vertices[0][0][0], crop_vertices[0][0][1]),
-                 (crop_vertices[1][0][0], crop_vertices[1][0][1]),
-                 (crop_vertices[2][0][0], crop_vertices[2][0][1]),
-                 (crop_vertices[3][0][0], crop_vertices[3][0][1])]
-            crop_polygon = Polygon(tmp_crop_corners)
+            crop_corners = getRandomSquareVertices((x, y), (n / 2, n / 2), rotation_angle)
+            if theta is not None:
+                crop_corners = cv2.perspectiveTransform(crop_corners, np.linalg.inv(H))
 
-            found_crop = not marker_polygon.intersects(crop_polygon)
-            if found_crop:
-                crop_corners.append(tmp_crop_corners)
+            tmp_crop_corners = [(crop_corners[0][0][0], crop_corners[0][0][1]),
+                                (crop_corners[1][0][0], crop_corners[1][0][1]),
+                                (crop_corners[2][0][0], crop_corners[2][0][1]),
+                                (crop_corners[3][0][0], crop_corners[3][0][1])]
+
+            crop_polygon = Polygon(tmp_crop_corners)
+            is_crop_in_img = (original_img_polygon.contains(crop_polygon))
+            # for x_crop,y_crop in tmp_crop_corners:
+            #     if (x_crop < 0 or x_crop > height) or (y_crop < 0 or y_crop > width):
+            #         is_crop_in_img = False
+            #         break
+
+            valid_crop = ((not original_marker_polygon.intersects(crop_polygon)) and is_crop_in_img)
+            if valid_crop:
+                # plt.figure()
+                # plt.imshow(cv2.polylines(np.array(img), [np.array(tmp_crop_corners).reshape(-1,1,2).astype(np.int32)], True, (0, 255, 255), 2))
+                # plt.show()
+
+                crop_corner_arr.append(tmp_crop_corners)
                 is_there_valid_regions = True
                 break
             num_attempts += 1
         # Check if we found a crop
         if not is_there_valid_regions:
-            return False
-    return crop_corners
+            return False, None, None, None
+    if theta is None:
+        return crop_corner_arr, None, None, None
+    else:
+        return crop_corner_arr, H, th_deg, phi_deg
 
 
+def distort_img(img, theta=25, phi=0):
+    R1 = np.zeros((3, 3))
+    R1[0, 0] = -1
+    R1[1, 1] = 1
+    R1[2, 2] = -1
+
+    T1 = np.array(([0], [0], [1]))
+
+    # augmented image
+    th_deg = random.uniform(-theta, theta)
+
+    th = np.deg2rad(th_deg)
+    phi_deg = random.uniform(phi)
+
+    phi = np.deg2rad(phi_deg)
+
+    a = np.array(([0], [0], [1]))
+
+    b = np.array(([np.sin(np.pi + th) * np.cos(phi)], [np.sin(np.pi + th) * np.sin(phi)], [np.cos(np.pi + th)]))
+
+    v = (np.cross(a.T, b.T))
+    c = np.dot(np.squeeze(a), np.squeeze(b))
+
+    vx = np.array(([0, v[0, 2], v[0, 1]],
+                   [v[0, 2], 0, -v[0, 0]],
+                   [-v[0, 1], v[0, 0], 0]))
+    vx = np.round(vx, 4)
+
+    R2 = np.identity(3) + vx + (np.matmul(vx, vx) * (1 / (1 + c)))
+    T2 = np.array(([np.sin(th) * np.cos(phi)], [np.sin(th) * np.sin(phi)], [np.cos(th)]))
+
+    c, r = img.size
+
+    f = np.maximum(r, c) * 1.2
+    K = np.array([[f, 0, c / 2],
+                  [0, -f, r / 2],
+                  [0, 0, 1]])
+    R1 = np.linalg.inv(R1)
+    R2 = np.linalg.inv(R2)
+
+    P1 = np.matmul(K, np.concatenate((R1, np.matmul(-R1, T1)), axis=1))
+    P2 = np.matmul(K, np.concatenate((R2, np.matmul(-R2, T2)), axis=1))
+
+    H = np.matmul(P2, np.linalg.pinv(P1))
+
+    h, w = r, c
+    pts = np.float32([[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]).reshape(-1, 1, 2)
+    pts_distort = cv2.perspectiveTransform(pts, H)
+
+    # DEBUG Visualization
+    # [xmin, ymin] = np.int32(pts_distort.min(axis=0).ravel() - 0.5)
+    # [xmax, ymax] = np.int32(pts_distort.max(axis=0).ravel() + 0.5)
+    # t = [-xmin, -ymin]
+    # Ht = np.array([[1, 0, t[0]], [0, 1, t[1]], [0, 0, 1]])  # translate
+    # dst = cv2.warpPerspective(img, Ht.dot(H), (xmax - xmin, ymax - ymin))
+
+    original_img_corners = np.concatenate(pts, axis=0)
+    distorted_img_corners = np.concatenate(pts_distort, axis=0)
+
+    return H, original_img_corners, distorted_img_corners, th_deg, phi_deg
 
 def get_crops(restricted_area, n_crops, image, crop_width, crop_height, n_channels, margin):
     crops = []
@@ -469,31 +594,32 @@ def get_crops(restricted_area, n_crops, image, crop_width, crop_height, n_channe
     marker_polygon = marker_polygon.buffer(margin)
     for n in range(n_crops):
         # Generate crops
-        found_crop = False
+        valid_crop = False
         # attempt = 0
-        while not found_crop:
-            forbid_border = math.ceil((crop_width**2+crop_height**2)**(1/2))/2
+        while not valid_crop:
+            forbid_border = math.ceil((crop_width ** 2 + crop_height ** 2) ** (1 / 2)) / 2
             max_x = image.shape[1] - forbid_border
             max_y = image.shape[0] - forbid_border
             x = np.random.randint(forbid_border, max_x)
             y = np.random.randint(forbid_border, max_y)
-            rotation_angle = random.random()*np.pi
+            rotation_angle = random.random() * np.pi
 
-            crop_vertices = getRandomSquareVertices((x,y), (crop_width/2, crop_height/2), rotation_angle)
+            crop_corners = getRandomSquareVertices((x, y), (crop_width / 2, crop_height / 2), rotation_angle)
             crop_polygon = Polygon(
-                [(crop_vertices[0][0][0], crop_vertices[0][0][1]),
-                 (crop_vertices[1][0][0], crop_vertices[1][0][1]),
-                 (crop_vertices[2][0][0], crop_vertices[2][0][1]),
-                 (crop_vertices[3][0][0], crop_vertices[3][0][1])])
+                [(crop_corners[0][0][0], crop_corners[0][0][1]),
+                 (crop_corners[1][0][0], crop_corners[1][0][1]),
+                 (crop_corners[2][0][0], crop_corners[2][0][1]),
+                 (crop_corners[3][0][0], crop_corners[3][0][1])])
 
-            found_crop = not marker_polygon.intersects(crop_polygon)
-            if found_crop:
+            valid_crop = not marker_polygon.intersects(crop_polygon)
+            if valid_crop:
                 if n_channels == 1:
-                    crops.append(get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), crop_vertices, crop_width, crop_height))
-                    # for cv, wid in zip(crop_vertices,[1000, 800, 500]):
+                    crops.append(
+                        get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), crop_corners, crop_width, crop_height))
+                    # for cv, wid in zip(crop_corners,[1000, 800, 500]):
                     #     crops.append(get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv, wid, wid))
                 else:
-                    crops.append(get_crop(image, crop_vertices, crop_width, crop_height))
+                    crops.append(get_crop(image, crop_corners, crop_width, crop_height))
                 break
             # attempt += 1
     return montage_crops(n_crops, crop_width, crop_height, n_channels, crops)
@@ -522,6 +648,7 @@ def read_img_or_crop_df_and_return_img_df(img_or_crop_df_pth):
         df.drop_duplicates(subset=['original_fp'], inplace=True)
     return df
 
+
 def create_df_img(files, img_or_crop_df_pth, skip_manual_marker_selection, marker_len, out_folder, units):
     # If path to a dataframe containing marker information is provided, read the csv.
     if img_or_crop_df_pth is not None:
@@ -529,11 +656,13 @@ def create_df_img(files, img_or_crop_df_pth, skip_manual_marker_selection, marke
         if isinstance(df_img['corners'][0], np.ndarray):
             pass
         else:
-            tmp_corners = [re.sub(' +', ' ', corner.replace('\n', ' ').replace('[', ' ').replace(']', ' ')).strip().split(' ') for corner in df_img['corners'].tolist()]
+            tmp_corners = [
+                re.sub(' +', ' ', corner.replace('\n', ' ').replace('[', ' ').replace(']', ' ')).strip().split(' ') for
+                corner in df_img['corners'].tolist()]
             tmp_corners = [np.array([(float(corners[0]), float(corners[1])),
-                                (float(corners[2]), float(corners[3])),
-                                (float(corners[4]), float(corners[5])),
-                                (float(corners[6]), float(corners[7]))]) for corners  in tmp_corners]
+                                     (float(corners[2]), float(corners[3])),
+                                     (float(corners[4]), float(corners[5])),
+                                     (float(corners[6]), float(corners[7]))]) for corners in tmp_corners]
             df_img['corners'] = tmp_corners
     # Otherwise, loop through the images to detect the markers to form the dataframe
     else:
@@ -598,7 +727,9 @@ def create_df_img(files, img_or_crop_df_pth, skip_manual_marker_selection, marke
         df_img.to_csv(f'{out_folder}/img_dataset.csv', index=False)
     return df_img
 
-def extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units, crop_height, crop_width, n_crops, m_patches, equalize_distribution, skip_manual_marker_selection):
+
+def extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units, crop_height, crop_width,
+                                 n_crops, m_patches, equalize_distribution, skip_manual_marker_selection):
     # Initialize container for holding patch-wise information
     df_crop = create_empty_df_dict('crop')
 
@@ -639,7 +770,8 @@ def extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_
                     break
             if multiplier_idx == -1:
                 raise ValueError("WRONG")
-            new_crops = get_random_crops(image, crop_height, crop_width, corners, n_crops, m_patches=int(m_patches * multiplier[multiplier_idx]))
+            new_crops = get_random_crops(image, crop_height, crop_width, corners, n_crops,
+                                         m_patches=int(m_patches * multiplier[multiplier_idx]))
         else:
             new_crops = get_random_crops(image, crop_height, crop_width, corners, n_crops, m_patches=m_patches)
 
@@ -707,8 +839,9 @@ def create_n_by_n_markers(crop_width=299,
     :param equalize_distribution (boolean): Set true to equalize the distribution of patch scales.
     """
     # Retrieve all images in data folder
-    files_glob = os.path.join(overall_folder, data_folder, "**/*.[jJ][pP][gG]") # extracts files which end with jpg (not case sensitive)
-    files = glob(files_glob, recursive=True)    # returns the list of files
+    files_glob = os.path.join(overall_folder, data_folder,
+                              "**/*.[jJ][pP][gG]")  # extracts files which end with jpg (not case sensitive)
+    files = glob(files_glob, recursive=True)  # returns the list of files
     # Extract directories from image paths and make directories
     all_dirs = extract_directory(files, data_folder, out_folder)
     make_dir(all_dirs)
@@ -717,13 +850,18 @@ def create_n_by_n_markers(crop_width=299,
     copytree('../code', os.path.join(out_folder, 'code'))
     # Extract crops to form the patch dataset
     if img_df is None:
-        df_crop, df_img = extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units, crop_height, crop_width, n_crops, m_patches, equalize_distribution, skip_manual_marker_selection)
+        df_crop, df_img = extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units,
+                                                       crop_height, crop_width, n_crops, m_patches,
+                                                       equalize_distribution, skip_manual_marker_selection)
     else:
-        df_crop = extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units, crop_height, crop_width, n_crops, m_patches, equalize_distribution,  skip_manual_marker_selection)
+        df_crop = extract_crops_from_df_or_img(files, img_df, data_folder, out_folder, marker_len, units, crop_height,
+                                               crop_width, n_crops, m_patches, equalize_distribution,
+                                               skip_manual_marker_selection)
 
     # Save crop dataframes
     df_crop = pd.DataFrame(df_crop)
     df_crop.to_csv(f'{out_folder}/crop_dataset.csv', index=False)
+
 
 def create_zoom_dataset(crop_length=550,
                         m_patches=10,
@@ -738,12 +876,16 @@ def create_zoom_dataset(crop_length=550,
                         n_bins=10,
                         margin=0,  # in units of pixels
                         patches_per_bin=300,
-                        attempts=20,
-                        st_type='smooth',  # "smooth" for randomly selecting the st between the bin range. "bin" for using st=bin value (constant value),
-                        img_sampling_type='normal',  # 'normal' to use a "normal"-like distribution to sample images close to st. 'uniform' to randomly select any images (uniform distribution)
+                        attempts=200,
+                        st_type='smooth',
+                        # "smooth" for randomly selecting the st between the bin range. "bin" for using st=bin value (constant value),
+                        img_sampling_type='normal',
+                        # 'normal' to use a "normal"-like distribution to sample images close to st. 'uniform' to randomly select any images (uniform distribution)
                         minimum_n=550,
                         testing_step_n=10,  # increment of pixels from crop_length
                         testing_s_steps=10,  # no of times it increments
+                        theta=None,
+                        phi=0
                         ):
     """
 
@@ -773,6 +915,8 @@ def create_zoom_dataset(crop_length=550,
         testing_step_n: Used for mode 'testing', specifies the amount of change (in pixels) in n for each iteration
             (i.e. given crop_length 550 and testing_step_n of 10 and testing_s_steps of, we extract m patches of size 520, 530, 540, 550, 560, 570, 580)
         testing_s_steps: Used for mode 'testing', specifies number of times to step n.
+        theta: angle rotation range from the normal to the surface  for perspective distortion
+        phi: camera rotation range (in degrees) for perspective distortion
     """
     # Retrieve all images in data folder
     files_glob = os.path.join(overall_folder, data_folder,
@@ -796,8 +940,7 @@ def create_zoom_dataset(crop_length=550,
     # Find range of each bin
     interval = (s_max - s_min) / n_bins
     # bins = np.arange(s_min, s_max + 1, interval)
-    s_t = [s_min+(i+1)*interval for i in range(n_bins)]
-
+    s_t = [s_min + (i + 1) * interval for i in range(n_bins)]
 
     # Build crop dataframe
     print(f"Building {mode} crop dataframe...")
@@ -805,13 +948,13 @@ def create_zoom_dataset(crop_length=550,
     # If mode is training create the zoom training dataset, which sets up bins and extracts m crops from a randomly selected image for each bin for all the bins
     if mode == 'training_and_validation':
         for st_bin in tqdm(s_t):
-            crop_df_for_st = create_empty_df_dict('crop_zoom')
+            crop_df_for_st = create_empty_df_dict('crop_zoom', theta)
 
             while patches_per_bin >= len(crop_df_for_st['original_fp']):
                 if st_type == 'bin':
                     st = st_bin
                 elif st_type == 'smooth':
-                    st = random.uniform(st_bin, st_bin-interval)  # Get a random float number in the st bin range
+                    st = random.uniform(st_bin, st_bin - interval)  # Get a random float number in the st bin range
                 else:
                     raise ValueError(f"{st_type} not implemented. Please choose between 'bin' and 'smooth'.")
                 """"""""""""""""""
@@ -821,15 +964,16 @@ def create_zoom_dataset(crop_length=550,
                     # define gaussian dist with mean s_t and std dev as original std dev/2
                     # for each row, plug each row in the gaussian equation (returns probability for that rows)
                     # this way, get the probability distribution using s_i, this will be the weights
-                    mu=st
-                    sigma = df_img['pix_per_len'].std()/2
-                    prob_func = lambda x: 1/(sigma*(2*np.pi)**0.5)*(np.exp(-0.5*((x-mu)/sigma)**2))
+                    mu = st
+                    sigma = df_img['pix_per_len'].std() / 2
+                    prob_func = lambda x: 1 / (sigma * (2 * np.pi) ** 0.5) * (np.exp(-0.5 * ((x - mu) / sigma) ** 2))
 
                     # for each row, plug in s_i to get the corresponding weight
                     weights = prob_func(df_img['pix_per_len'])
                     row = df_img.sample(weights=weights)  # TODO: Check if this is working properly
                 else:
-                    raise ValueError(f"{img_sampling_type} not implemented. Please choose between 'random' and 'weighted'.")
+                    raise ValueError(
+                        f"{img_sampling_type} not implemented. Please choose between 'random' and 'weighted'.")
                 """"""""""""""""""
 
                 s_i = row['pix_per_len'].tolist()[0]
@@ -843,42 +987,66 @@ def create_zoom_dataset(crop_length=550,
                     continue
 
                 f_list = get_intermittent_file_path(original_fp, data_folder)
-                crops = attempt_find_valid_crops(marker_corners, margin, m_patches, n, original_fp, attempts)
-                if crops: # If we found crops
+                crops, H, th_deg, phi_deg = attempt_find_valid_crops(marker_corners, margin, m_patches, n, original_fp, attempts, theta, phi)
+                if crops:  # If we found crops
                     for idx, crop in enumerate(crops):
+
                         crop_df_for_st['original_fp'].append(original_fp)
                         crop_df_for_st['s_i'].append(s_i)
-                        crop_df_for_st['file'].append(os.path.join(out_folder, 'cropped', '/'.join(f_list),
-                                              f"st_{np.round(st, 1)}_si_{np.round(s_i, 1)}_n_{n}{original_fp.split('.')[-2].split('/')[-1]}_crop_{idx}.JPG")) # TODO: Check for correct function
+                        file_name = os.path.join(out_folder, 'cropped', '/'.join(f_list),
+                                                 f"st_{np.round(st, 3)}_si_{np.round(s_i, 3)}_n_{n}_{original_fp.split('.')[-2].split('/')[-1]}_crop_{idx}.JPG")
+                        dup_name_idx = 0.1
+                        while file_name in crop_df_for_st['file']:
+                            file_name = os.path.join(out_folder, 'cropped', '/'.join(f_list),
+                                                     f"st_{np.round(st, 3)}_si_{np.round(s_i, 3)}_n_{n}_{original_fp.split('.')[-2].split('/')[-1]}_crop_{idx+dup_name_idx}.JPG")
+                            dup_name_idx += 0.1
+
+                        crop_df_for_st['file'].append(file_name)  # TODO: Check for correct function
                         crop_df_for_st['pix_per_len'].append(st)
                         crop_df_for_st['units'].append(units)
                         crop_df_for_st['crop_corners'].append(crop)
                         crop_df_for_st['marker_corners'].append(marker_corners)
                         crop_df_for_st['n'].append(n)
+                        if theta is not None:
+                            crop_df_for_st['H'].append(H)
+                            crop_df_for_st['th_deg'].append(th_deg)
+                            crop_df_for_st['phi_deg'].append(phi_deg)
             crop_df.append(pd.DataFrame(crop_df_for_st))
     # Testing dataset
     elif mode == 'testing_implementation':
-        n_arr = np.arange(crop_length-testing_step_n*testing_s_steps, crop_length+testing_step_n*testing_s_steps, testing_s_steps)
+        n_arr = np.arange(crop_length - testing_step_n * testing_s_steps,
+                          crop_length + testing_step_n * testing_s_steps, testing_s_steps)
         for idx, row in tqdm(df_img.iterrows(), total=len(df_img)):
-            crop_df_for_image = create_empty_df_dict('crop_zoom')
+            crop_df_for_image = create_empty_df_dict('crop_zoom', theta)
             original_fp = row['original_fp']
             s_i = row['pix_per_len']
             marker_corners = row['corners']
             f_list = get_intermittent_file_path(original_fp, data_folder)
             for n in n_arr:
                 st = s_i * crop_length / n
-                crops = attempt_find_valid_crops(marker_corners, margin, m_patches, n, original_fp, attempts)
+                crops, H, th_deg, phi_deg = attempt_find_valid_crops(marker_corners, margin, m_patches, n, original_fp, attempts, theta, phi)
+
                 if crops:  # If we found crops
                     for idx, crop in enumerate(crops):
                         crop_df_for_image['original_fp'].append(original_fp)
                         crop_df_for_image['s_i'].append(s_i)
+                        file_name = os.path.join(out_folder, 'cropped', '/'.join(f_list), f"st_{np.round(st, 3)}_si_{np.round(s_i, 3)}_{original_fp.split('.')[-2].split('/')[-1]}_crop_{idx}.JPG")
+                        dup_name_idx = 1
+                        while file_name in crop_df_for_image['file']:
+                            file_name = os.path.join(out_folder, 'cropped', '/'.join(f_list), f"st_{np.round(st, 3)}_si_{np.round(s_i, 3)}_{original_fp.split('.')[-2].split('/')[-1]}_crop_{idx+dup_name_idx}.JPG")
+                            dup_name_idx += 1
+
                         crop_df_for_image['file'].append(os.path.join(out_folder, 'cropped', '/'.join(f_list),
-                                                                   f"st_{np.round(st, 1)}_si_{np.round(s_i, 1)}_{original_fp.split('.')[-2].split('/')[-1]}_crop_{idx}.JPG"))  # TODO: Check for correct function
+                                                                      f"st_{np.round(st, 3)}_si_{np.round(s_i, 3)}_{original_fp.split('.')[-2].split('/')[-1]}_crop_{idx}.JPG"))  # TODO: Check for correct function
                         crop_df_for_image['pix_per_len'].append(st)
                         crop_df_for_image['units'].append(units)
                         crop_df_for_image['crop_corners'].append(crop)
                         crop_df_for_image['marker_corners'].append(marker_corners)
                         crop_df_for_image['n'].append(n)
+                        if theta is not None:
+                            crop_df_for_image['H'].append(H)
+                            crop_df_for_image['th_deg'].append(th_deg)
+                            crop_df_for_image['phi_deg'].append(phi_deg)
                 else:
                     print(f"WARNING: patches were not able to be extracted for n: {n} and file {original_fp}.\n"
                           f"This can result in a incomplete assessment when testing the zoom-based scale estimation approach.")
@@ -892,27 +1060,27 @@ def create_zoom_dataset(crop_length=550,
     for idx, row in tqdm(crop_df.iterrows(), total=len(crop_df)):
         crop_corners = row['crop_corners']
         image = cv2.imread(row['original_fp'])
-        new_crop = get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), np.expand_dims(np.array(crop_corners), axis=1), row['n'], row['n'])
+        new_crop = get_crop(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), np.expand_dims(np.array(crop_corners), axis=1),
+                            row['n'], row['n'])
         cv2.imwrite(row['file'], new_crop)
 
     # Ideas for later:
     # Extract m patches from each image for as any bins as possible and then equalize the histogram using the random image selection algorithm
     # Extract patches from s_i closest to s_t first, and then extract using randomly selected images of which can have significantly different s_i (this is because s_i closest to s_t is the "best" representative samples for that bin)
 
-if __name__ == '__main__':
 
+if __name__ == '__main__':
     # training image dataset
 
-
-    create_zoom_dataset(overall_folder='../datasets/homography_test/',  # folder that contains raw data
-                        out_folder='../datasets/homography_test/case_2_3_train',
-                        # contains cropped dataset
-                        img_or_crop_df_pth=None,
-                        img_sampling_type='uniform',
-                        skip_manual_marker_selection=False,
-                        n_bins=1,
-                        m_patches=1, patches_per_bin=10, crop_length=850,
-                        )
+    # create_zoom_dataset(overall_folder='../datasets/PED_V2/',  # folder that contains raw data
+    #                     out_folder='../datasets/PED_V2/DELETE_THIScase_2_3_train',
+    #                     # contains cropped dataset
+    #                     img_or_crop_df_pth=None,
+    #                     img_sampling_type='uniform',
+    #                     skip_manual_marker_selection=False,
+    #                     n_bins=1,
+    #                     m_patches=1, patches_per_bin=10, crop_length=850,
+    #                     )
     # create_n_by_n_markers(n_crops=2,
     #                       m_patches=5,
     #                       overall_folder='../datasets/homography_test/',
@@ -920,14 +1088,23 @@ if __name__ == '__main__':
     #                       crop_height=100,
     #                       crop_width=100,
     #                       marker_len=9.4)
-
     # create_zoom_dataset(overall_folder='../datasets/PED_V2/',  # folder that contains raw data
-    #                     out_folder='../datasets/PED_V2/case_2_3_train',
+    #                     out_folder='../datasets/PED_V2/DELETE_THIS_case_2_3_train',
     #                     # contains cropped dataset
     #                     img_or_crop_df_pth='../datasets/PED_V2/2_processed/train_img_dataset.csv',
     #                     img_sampling_type='uniform',
     #                     m_patches=1, patches_per_bin=900, crop_length=850,
     #                     )
+    create_zoom_dataset(overall_folder='../datasets/homography_test_v2/',  # folder that contains raw data
+                        out_folder='../datasets/homography_test_v2/trial',
+                        # contains cropped dataset
+                        img_or_crop_df_pth=None,
+                        skip_manual_marker_selection=False,
+                        img_sampling_type='uniform',
+                        n_bins=10,
+                        m_patches=1, patches_per_bin=100, crop_length=850,
+                        theta=50
+                        )
     #
     # # test image dataset
     # create_zoom_dataset(overall_folder='../datasets/PED_V2/',  # folder that contains raw data
@@ -972,12 +1149,6 @@ if __name__ == '__main__':
     #                     )
     # Testing case 4
 
-
-
-
-
-
-
     # create_zoom_dataset(overall_folder='../datasets/BW/',  # folder that contains raw data
     #                     out_folder='../datasets/BW/test_zoom_generator',  # contains cropped dataset
     #                     img_df='../datasets/BW/2_processed/train_img_dataset.csv'
@@ -990,14 +1161,12 @@ if __name__ == '__main__':
     # create_n_by_n_markers_from_df(n_crops=1, m_p atches=50, overall_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_test_350_final', img_df='../datasets/PED_V2/2_processed/test_img_dataset.csv', crop_height=350, crop_width=350, marker_len=9.4)
     # create_n_by_n_markers_from_df_equalize_distribution(n_crops=1, m_patches=15, overall_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_train_350_final', img_df='../datasets/PED_V2/2_processed/train_img_dataset.csv', crop_height=350, crop_width=350, marker_len=9.4)
 
-
     # # PED_V2 BRIDGE 850
     # create_n_by_n_markers(n_crops=1, m_patches=50,  # 50 patches per image
     #                       overall_folder='../datasets/PED_V2/', # folder that contains raw data
     #                       out_folder='../datasets/PED_V2/testing',  # contains cropped dataset
     #                       img_df='../datasets/PED_V2/2_processed/test_img_dataset.csv',
     #                       crop_height=850, crop_width=850, marker_len=9.4)
-
 
     # create_n_by_n_markers_from_df_equalize_distribution(n_crops=1, m_patches=15, overall_folder='../datasets/PED_V2/', out_folder='../datasets/PED_V2/3_train_850_final', img_df='../datasets/PED_V2/2_processed/train_img_dataset.csv', crop_height=850, crop_width=850, marker_len=9.4)
     # # ASH
@@ -1012,7 +1181,6 @@ if __name__ == '__main__':
     # create_n_by_n_markers_from_df(n_crops=1, m_patches=50, overall_folder='../datasets/DIFF/', out_folder='../datasets/DIFF/3_test_final', img_df='../datasets/DIFF/2_processed/img_dataset.csv', crop_height=850, crop_width=850, marker_len=9.2)
     # # ZOOM
     # create_n_by_n_markers_from_df(n_crops=1, m_patches=50, overall_folder='../datasets/ZOOM/', out_folder='../datasets/ZOOM/3_test_final', img_df='../datasets/ZOOM/2_processed/img_dataset.csv', crop_height=850, crop_width=850)
-
 
     # create_n_by_n_markers_from_df_equalize_distribution(n_crops=1, m_patches=20, overall_folder='../datasets/13_ped_bridge_new_dataset/', out_folder='../datasets/13_ped_bridge_new_dataset/paper_100/', img_df='../datasets/13_ped_bridge_new_dataset/1_processed/train_high_light_img_dataset.csv', crop_height=100, crop_width=100)
     # create_n_by_n_markers_from_df_equalize_distribution(n_crops=1, m_patches=20, overall_folder='../datasets/13_ped_bridge_new_dataset/', out_folder='../datasets/13_ped_bridge_new_dataset/paper_350/', img_df='../datasets/13_ped_bridge_new_dataset/1_processed/train_high_light_img_dataset.csv', crop_height=350, crop_width=350)

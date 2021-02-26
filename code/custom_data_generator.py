@@ -16,11 +16,10 @@ class MultiPatchDataGenerator(Sequence):
         eg. https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
         :param data: dataframe containing file paths, and labels
         :param N: number of patches in a set
-        :param to_fit: True to return X and y, False to return X only
         :param batch_size: batch size at each iteration
         :param dim: tuple indicating image dimension
-        :param n_channels: number of image channels
         :param shuffle: True to shuffle label indexes after every epoch
+
         """
         self.data = data
         self.N = N

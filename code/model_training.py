@@ -359,7 +359,7 @@ class CNN_model:
         if self.retrain is None:  # Train new model
             # Import Base Model from Bag of Models
             if self.model_type == 'multi':
-
+                # TODO: Create multpatch network
                 base_model = applications.MobileNetV2(
                     input_shape=(self.model_img_width, self.model_img_height, self.N_patches_per_set*self.model_img_channels),
                     weights=self.model_weights, include_top=False)
