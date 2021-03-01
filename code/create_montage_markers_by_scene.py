@@ -1095,15 +1095,15 @@ if __name__ == '__main__':
     #                     img_sampling_type='uniform',
     #                     m_patches=1, patches_per_bin=900, crop_length=850,
     #                     )
-    create_zoom_dataset(overall_folder='../datasets/homography_test_v2/',  # folder that contains raw data
-                        out_folder='../datasets/homography_test_v2/trial',
+    create_zoom_dataset(overall_folder='../datasets/homography_PED_v2/',  # folder that contains raw data
+                        out_folder='../datasets/homography_PED_v2/manual_marker_OFF_trial',
                         # contains cropped dataset
                         img_or_crop_df_pth=None,
-                        skip_manual_marker_selection=False,
+                        skip_manual_marker_selection=True,
                         img_sampling_type='uniform',
                         n_bins=10,
-                        m_patches=1, patches_per_bin=100, crop_length=850,
-                        theta=50
+                        m_patches=1, patches_per_bin=900, crop_length=850,
+                        theta=20
                         )
     #
     # # test image dataset
